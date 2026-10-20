@@ -29,7 +29,12 @@
     "2) 驱动轮 —— 唯一一处刻意偏离 USD：",
     "   Isaac 给驱动轮的是 kv=100 + 力矩 ±1000 N·m + ctrl 不限幅；RL 里 ctrl 由策略自由",
     "   输出，力矩会长期贴在上限。这里改成速度伺服 kv=20 / ±100 N·m / ±15 rad/s",
-    "   （15 rad/s × 轮半径 ≈ 1 m/s，是这类底盘合理的线速度上限）。"
+    "   （15 rad/s × 轮半径 ≈ 1 m/s，是这类底盘合理的线速度上限）。",
+    "",
+    "3) sites —— TCP/EEF 标记点：Newton 的 MJCF 出口不保留 USD 里的 site，用 mjcf.sites 补。",
+    "   TCP 挂在腕部 link7，EEF 挂在夹爪 base；EE=None 时夹爪 body 不存在，",
+    "   所以 EEF 规则标了 optional（body 缺失只记日志、不告警）。",
+    "   注意 W2 的 TCP 不带 quat，S2 的带 —— 与参考产物保持一致。"
   ],
 
   "usd": {
@@ -39,7 +44,7 @@
       "Arm_Left": "M6_CCS",
       "Arm_Right": "M6_CCS",
       "Head": "v1",
-      "EE": "AG2F90"
+      "EE": "None"
     },
     "collision_mode": "enable"
   },
@@ -47,6 +52,38 @@
   "mjcf": {
     "name_from_usd": ["joint", "body"],
     "actuator_names": "joint",
+    "sites": [
+      {
+        "name": "LEFT_TCP_SITE",
+        "body": "left_link7",
+        "pos": [0, -0.095, 0],
+        "size": 0.005,
+        "rgba": [0.2, 0.9, 0.2, 0.5]
+      },
+      {
+        "name": "LEFT_EEF_SITE",
+        "body": "left_gripper_gripper_base",
+        "pos": [0, 0, 0.19],
+        "size": 0.005,
+        "rgba": [0.2, 0.9, 0.2, 0.5],
+        "optional": true
+      },
+      {
+        "name": "RIGHT_TCP_SITE",
+        "body": "right_link7",
+        "pos": [0, -0.095, 0],
+        "size": 0.005,
+        "rgba": [0.2, 0.9, 0.2, 0.5]
+      },
+      {
+        "name": "RIGHT_EEF_SITE",
+        "body": "right_gripper_gripper_base",
+        "pos": [0, 0, 0.19],
+        "size": 0.005,
+        "rgba": [0.2, 0.9, 0.2, 0.5],
+        "optional": true
+      }
+    ],
     "scene": {
       "timestep": 0.002
     },

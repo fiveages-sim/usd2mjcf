@@ -37,6 +37,7 @@
     "ctrlrange_from_joint": true,
     "fix_zero_collision_masks": true,
     "visuals": true,
+    "sites": [],
     "scene": {
       "sync_from_usd": true,
       "timestep": 0.002,

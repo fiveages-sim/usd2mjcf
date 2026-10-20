@@ -19,6 +19,42 @@ from typing import Any, Mapping, Sequence
 DEFAULT_SCHEMA_PRIORITY: tuple[str, ...] = ("mjc", "newton", "physx")
 DEFAULT_VIEWS: tuple[tuple[float, float], ...] = ((135.0, -20.0), (45.0, -10.0), (225.0, 0.0))
 
+#: `mjcf.sites` 每个条目的键：`body` / `optional` 是目标属性，其余原样写进 `<site>`
+SITE_TARGET_KEYS: frozenset[str] = frozenset({"body", "optional"})
+SITE_ATTR_KEYS: frozenset[str] = frozenset(
+    {
+        "name",
+        "class",
+        "type",
+        "group",
+        "pos",
+        "quat",
+        "euler",
+        "axisangle",
+        "xyaxes",
+        "zaxis",
+        "fromto",
+        "size",
+        "rgba",
+        "material",
+        "ref",
+        "user",
+    }
+)
+
+#: site 矢量属性的合法长度；`size` 可以是标量，也可以是 1~3 个元素
+SITE_VECTOR_LENGTHS: dict[str, tuple[int, ...]] = {
+    "pos": (3,),
+    "quat": (4,),
+    "euler": (3,),
+    "axisangle": (4,),
+    "xyaxes": (6,),
+    "zaxis": (3,),
+    "fromto": (6,),
+    "size": (1, 2, 3),
+    "rgba": (4,),
+}
+
 
 # ---------------------------------------------------------------------------
 # 子配置
@@ -98,6 +134,8 @@ class MjcfConfig:
     fix_zero_collision_masks: bool = True
     #: 是否导出仅用于可视化的几何（关掉可显著减小产物，适合纯 RL 训练）
     visuals: bool = True
+    #: 往指定 body 里补 `<site>`（TCP / EEF 等标记点）。每条的结构见 README §6.4
+    sites: list[dict[str, Any]] = field(default_factory=list)
     scene: SceneConfig = field(default_factory=SceneConfig)
     materials: MaterialConfig = field(default_factory=MaterialConfig)
     contact: ContactConfig = field(default_factory=ContactConfig)
@@ -207,6 +245,40 @@ _DATACLASS_REGISTRY = {
 }
 
 
+def _validate_sites(sites: Sequence[Any], problems: list[str]) -> None:
+    """校验 `mjcf.sites` 的每条规则：键名、必填项、矢量长度。
+
+    拼错键必须在这里暴露 —— 否则它会被当成 `<site>` 属性写进产物，
+    MuJoCo 编译时才报错（甚至被静默忽略）。
+    """
+    allowed = SITE_TARGET_KEYS | SITE_ATTR_KEYS
+    for index, entry in enumerate(sites):
+        where = f"mjcf.sites[{index}]"
+        if not isinstance(entry, Mapping):
+            problems.append(f"{where}: 必须是对象，收到 {entry!r}")
+            continue
+        unknown = sorted(
+            key for key in entry if not str(key).startswith("_") and key not in allowed
+        )
+        if unknown:
+            problems.append(
+                f"{where}: 未知键 {unknown}（可选 {sorted(allowed)}）"
+            )
+        for key in ("body", "name"):
+            if not str(entry.get(key, "")).strip():
+                problems.append(f"{where}: 缺少必填键 {key!r}")
+        for key, lengths in SITE_VECTOR_LENGTHS.items():
+            value = entry.get(key)
+            if value is None:
+                continue
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                if key != "size":
+                    problems.append(f"{where}.{key}: 需要 {lengths} 个数字，收到标量 {value!r}")
+                continue
+            if not isinstance(value, (list, tuple)) or len(value) not in lengths:
+                problems.append(f"{where}.{key}: 需要 {lengths} 个数字，收到 {value!r}")
+
+
 def validate(cfg: Config) -> list[str]:
     problems: list[str] = []
     if cfg.usd.collision_mode not in ("enable", "respect"):
@@ -225,6 +297,7 @@ def validate(cfg: Config) -> list[str]:
         problems.append(f"usd.schema_priority: 只能包含 mjc/newton/physx，收到 {cfg.usd.schema_priority}")
     if cfg.mjcf.scene.timestep is not None and cfg.mjcf.scene.timestep <= 0:
         problems.append(f"mjcf.scene.timestep: 必须为正数，收到 {cfg.mjcf.scene.timestep}")
+    _validate_sites(cfg.mjcf.sites, problems)
     return problems
 
 

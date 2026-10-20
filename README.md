@@ -76,6 +76,7 @@ out/robot/
 | `mjcf.scene.*` | `timestep=0.002` … | 场景参数**兜底值**；USD 里有就以 USD 为准 |
 | `mjcf.materials.*` | `enabled/pbr/hide_colliders` | 颜色传递；`pbr` 默认关（高金属度在 MuJoCo 默认灯光下发黑） |
 | `mjcf.contact.excludes` | `[]` | **额外碰撞排除** `[[body1, body2], ...]`，两侧支持 glob（见 §6.2） |
+| `mjcf.sites` | `[]` | **补充 `<site>`**：往指定 body 里加 TCP / EEF 标记点，`body` 支持 glob（见 §6.4） |
 | `patch` | `{}` | 通用补丁：`option/compiler/flags/joints/actuators/geoms/rename/remove/add`（见 §7） |
 | `strict_patch` | `false` | 补丁规则未命中任何元素时直接报错 |
 | `backend` | `cuda` | `cpu` 时用 MuJoCo-C 后端导出（无 GPU 环境） |
@@ -386,7 +387,7 @@ MuJoCo 用 geom 的 `group` 区分“默认渲染”和“只在需要时显示�
 
 > **为什么必须晚于掩码修复**：S2 的 USD 关闭了自碰撞，Newton 把掩码全算成 0；如果先
 > 做分组，就会把这些碰撞体当成视觉体（曾经的 bug：S2 里碰撞盒/碰撞圆柱盖在视觉网格上）。
-> 顺序现在固定为：材质 → 掩码修复 → **视觉/碰撞分组** → ctrlrange → 命名 → 补丁。
+> 顺序现在固定为：材质 → 掩码修复 → **视觉/碰撞分组** → ctrlrange → 命名 → excludes → 补丁 → **sites**。
 
 实测：
 
@@ -397,6 +398,52 @@ MuJoCo 用 geom 的 `group` 区分“默认渲染”和“只在需要时显示�
 
 在 `simulate` 里按 `Tab` 打开右侧面板，`Rendering → Geom Groups` 勾选/取消第 3 组即可
 单独检查碰撞形状；`mjcf.materials.hide_colliders: false` 可以让两者同时渲染（调试对称性时有用）。
+
+### 6.4 补充 `<site>`（`mjcf.sites`）
+
+Newton 的 `save_to_mjcf` **不保留** USD 里的 `MjcSite` / 变换标记，所以 TCP、EEF、
+相机光心这些 RL 侧最常用的参考系会整块丢失。手改产物下一次转换就没了，写在配置里才可
+版本管理（两个 `examples/*/config.json` 都有完整示例）：
+
+```jsonc
+"mjcf": {
+  "sites": [
+    {
+      "name": "LEFT_TCP_SITE",         // 必填，全局唯一
+      "body": "left_link7",            // 必填，产物里的 body 名，支持 glob
+      "pos": [0, -0.095, 0],
+      "quat": [0.5, 0.5, -0.5, 0.5],   // 省略 = 与 body 同姿态
+      "size": 0.005,
+      "rgba": [0.2, 0.9, 0.2, 0.5]
+    },
+    {
+      "name": "LEFT_EEF_SITE",
+      "body": "left_gripper_gripper_base",
+      "pos": [0, 0, 0.19],
+      "size": 0.005,
+      "rgba": [0.2, 0.9, 0.2, 0.5],
+      "optional": true                 // body 不存在时只记日志，不告警
+    }
+  ]
+}
+```
+
+规则：
+
+* `body` / `name` 必填；`body` 用 glob 展开，**命中多个 body 时只写第一个并告警**
+  （site 名全局唯一，左右两侧请拆成两条规则）；
+* `optional: true` 用于**随 variant 变化**的部件（例如 `EE=None` 时夹爪 base 不存在）；
+* 其余键（`type` / `group` / `pos` / `quat` / `euler` / `axisangle` / `xyaxes` /
+  `zaxis` / `fromto` / `size` / `rgba` / `material` / `ref` / `user`）原样写进 `<site>`；
+  拼错的键在**加载配置时**就会变成 warning（`strict_patch: true` 时直接报错）；
+* 产物里已有同名 site 时跳过，重复转换幂等。
+
+**写在哪一步生效**：通用补丁之后 —— 所以 `body` 写的是**产物最终的名字**
+（`left_link7`、`left_gripper_gripper_base`），不是 USD prim 路径，也不是
+`patch.rename` 之前的中转名。这样你看到产物里叫什么，配置里就写什么。
+
+实测：S2 / W2 在 `EE=None` 时，两个 TCP site 正常写入（`nsite=2`），EEF 规则按
+`optional` 静默跳过；把 `EE` 换成 `AG2F90` 后四条全部出现，与参考产物逐字一致。
 
 ---
 
@@ -483,7 +530,7 @@ src/usd2mjcf/
 ├── convert.py      # 编排：USD → Newton → MJCF → 后处理
 ├── usd_scene.py    # stage/variant/场景参数/碰撞体/命名表/远程闭包下载/入口发现
 ├── materials.py    # USD 材质与颜色解析
-├── mjcf_edit.py    # 场景同步 + 材质 + 命名还原 + 通用补丁
+├── mjcf_edit.py    # 场景同步 + 材质 + 命名还原 + site/exclude 补充 + 通用补丁
 └── verify.py       # 编译/步进/渲染/积分器守卫
 ```
 

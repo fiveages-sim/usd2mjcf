@@ -333,6 +333,144 @@ def add_contact_excludes(
 
 
 # ---------------------------------------------------------------------------
+# 补充 <site>（TCP / EEF 等标记点）
+# ---------------------------------------------------------------------------
+#: 写进 `<site>` 的属性顺序 —— 产物 diff 稳定，便于和手改文件逐行对比
+_SITE_ATTR_ORDER: tuple[str, ...] = (
+    "name",
+    "class",
+    "type",
+    "group",
+    "pos",
+    "quat",
+    "euler",
+    "axisangle",
+    "xyaxes",
+    "zaxis",
+    "fromto",
+    "size",
+    "rgba",
+    "material",
+    "ref",
+    "user",
+)
+
+
+def add_sites(
+    root: ET.Element,
+    sites: Sequence[Mapping[str, Any]],
+    *,
+    notes: list[str] | None = None,
+    strict: bool = False,
+) -> dict[str, Any]:
+    """按配置往指定 body 里追加 `<site>`。
+
+    为什么需要它：Newton 的 MJCF 出口（`save_to_mjcf`）不保留 USD 里的
+    `MjcSite` / 变换标记（TCP、EEF、相机光心…），而这些点恰恰是 RL 侧计算
+    末端位姿、奖励与观测时最常用的参考系。手改产物不可版本化，所以在配置里补。
+
+    每条规则的结构::
+
+        {"name": "LEFT_TCP_SITE", "body": "left_link7",
+         "pos": [0, -0.095, 0], "quat": [0.5, 0.5, -0.5, 0.5],
+         "size": 0.005, "rgba": [0.2, 0.9, 0.2, 0.5]}
+
+    * ``body`` 必填，支持 glob（`*` `?`），匹配的是**产物最终里的 body 名**
+      （即通用补丁之后的名字，`patch.rename` 的结果也算）；
+    * ``name`` 必填且全局唯一，已存在时跳过（重复运行幂等）；
+    * ``optional: true``：目标 body 不存在时只记一条日志，不告警 ——
+      适合随 variant 变化的部件（例如只有装夹爪时才有的 EEF body）；
+    * 其余键原样写进 `<site>`（`pos` / `quat` / `size` / `rgba` …）。
+
+    body 模式匹配到多个 body 时只写入第一个并告警（site 名全局唯一，
+    一条规则不可能同时挂到左右两侧；请拆成两条）。
+    """
+    log: list[str] = notes if notes is not None else []
+    worldbody = root.find("worldbody")
+    if worldbody is None:
+        raise ValueError("MJCF 里没有 <worldbody>，无法补充 <site>")
+
+    bodies = [b for b in worldbody.iter("body") if b.get("name")]
+    existing = {s.get("name") for s in worldbody.iter("site") if s.get("name")}
+    added: list[str] = []
+    skipped: list[str] = []
+    unknown: list[str] = []
+    ambiguous: list[str] = []
+
+    for index, entry in enumerate(sites):
+        if not isinstance(entry, Mapping):
+            raise ValueError(f"mjcf.sites[{index}] 必须是对象，收到 {entry!r}")
+        pattern = str(entry.get("body", "")).strip()
+        name = str(entry.get("name", "")).strip()
+        if not pattern or not name:
+            raise ValueError(f"mjcf.sites[{index}] 必须同时给出 body 和 name，收到 {dict(entry)!r}")
+        optional = bool(entry.get("optional", False))
+
+        matches = [b for b in bodies if fnmatch.fnmatchcase(b.get("name", ""), pattern)]
+        if not matches:
+            if optional:
+                log.append(f"  site {name}: 目标 body {pattern!r} 不存在（optional，跳过）")
+                continue
+            unknown.append(f"{name} @ {pattern}")
+            message = f"  site {name}: 目标 body {pattern!r} 不存在"
+            if strict:
+                raise LookupError(message.strip())
+            log.append(message + " ⚠️")
+            continue
+
+        if name in existing:
+            skipped.append(name)
+            log.append(f"  site {name}: 产物里已存在，跳过")
+            continue
+
+        if len(matches) > 1:
+            others = [b.get("name") for b in matches[1:]]
+            ambiguous.append(f"{name}: {pattern} → {[b.get('name') for b in matches]}")
+            message = (
+                f"  site {name}: body 模式 {pattern!r} 匹配到 {len(matches)} 个 body，"
+                f"只写入第一个 {matches[0].get('name')!r}（其余 {others}）"
+            )
+            if strict:
+                raise LookupError(message.strip())
+            log.append(message + " ⚠️")
+
+        parent = matches[0]
+        node = ET.Element("site")
+        for key in _SITE_ATTR_ORDER:
+            value = entry.get(key)
+            if value is not None:
+                node.set(key, fmt_value(value))
+        # 理论上 validate() 已拦下未知键；这里仍兜底写入，避免配置项被静默吞掉
+        for key, value in entry.items():
+            if str(key).startswith("_") or key in _SITE_ATTR_ORDER or key in ("body", "optional"):
+                continue
+            node.set(str(key), fmt_value(value))
+
+        # 放在自有 geom/joint 之后、子 body 之前（与 MJCF 常见排版一致）
+        insert_at = len(parent)
+        for position, child in enumerate(list(parent)):
+            if child.tag == "body":
+                insert_at = position
+                break
+        parent.insert(insert_at, node)
+        existing.add(name)
+        added.append(f"{name} @ {parent.get('name')}")
+
+    if added:
+        log.append(f"  补充 <site>：新增 {len(added)} 个（{added}）")
+    if skipped:
+        log.append(f"  补充 <site>：{len(skipped)} 个已存在，跳过。例：{skipped[:3]}")
+    if not added and not skipped and not ambiguous and not unknown:
+        log.append("  补充 <site>：配置里没有可用的规则")
+    return {
+        "added": added,
+        "skipped": skipped,
+        "unknownBodies": sorted(set(unknown)),
+        "ambiguous": ambiguous,
+    }
+
+
+# ---------------------------------------------------------------------------
 # 通用补丁引擎
 # ---------------------------------------------------------------------------
 def _matches(element: ET.Element, rule: Mapping[str, Any], tag: str) -> bool:

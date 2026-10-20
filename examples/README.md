@@ -13,10 +13,10 @@
 
 ```bash
 uv run usd2mjcf ~/FaSim-Isaac/robots/humanoid/FiveAges/Gen2/W2/FiveAges_W2.usda \
-  out/w2.xml examples/fiveages_w2/config.json
+  out/FA-W2/robot.xml examples/fiveages_w2/config.json
 
 uv run usd2mjcf ~/FaSim-Isaac/robots/humanoid/FiveAges/Gen2/S2/FiveAges_S2.usda \
-  out/s2.xml examples/fiveages_s2/config.json
+  out/FA-S2/robot.xml examples/fiveages_s2/config.json
 ```
 
 每次转换都会写 `<输出>.report.json`，里面能看到：
@@ -25,6 +25,7 @@ uv run usd2mjcf ~/FaSim-Isaac/robots/humanoid/FiveAges/Gen2/S2/FiveAges_S2.usda 
 * `scene` —— 场景参数的有效值与**来源**（`usd` / `config`）；
 * `collision` —— 被 USD 禁用的碰撞体路径、被重开了哪些、自带材质而被 Newton 丢弃的碰撞体；
 * `contactExcludes` —— 新增/跳过/未找到的额外碰撞排除；
+* `sites` —— TCP/EEF 等 `<site>` 的新增/跳过/目标 body 不存在的记录；
 * `naming` —— 名字还原结果、因撞名而加长的名称、Newton 合成名（改用 `patch.rename`）；
 * `ctrlrange` —— `ctrlrange` 单位修正与补齐；
 * `config` —— 本次实际生效的完整配置（可直接改完再跑）。
@@ -34,7 +35,8 @@ uv run usd2mjcf ~/FaSim-Isaac/robots/humanoid/FiveAges/Gen2/S2/FiveAges_S2.usda 
 1. 跑一次不带配置的转换，看 `report.json` 的 `variants[]`；
 2. 把要覆盖的键抄进自己的 `config.json`（结构见 [`config.example.json`](../config.example.json)）；
 3. 若产物里有“物理上必然重叠、但 USD 没写成形状级过滤”的部位，补 `mjcf.contact.excludes`；
-4. 若命名不合口味，用 `patch.rename` 的正则（见根 README §4.5）。
+4. 需要 TCP/EEF 等标记点时，用 `mjcf.sites` 把 `<site>` 挂到指定 body 上（见根 README §6.4）；
+5. 若命名不合口味，用 `patch.rename` 的正则（见根 README §4.5）。
 
 ## 远程资产
 

@@ -42,6 +42,7 @@ class ConvertResult:
     actuator_stats: dict[str, Any]
     ctrlrange_stats: dict[str, Any]
     contact_stats: dict[str, Any]
+    site_stats: dict[str, Any]
     mask_stats: dict[str, Any]
     separation_stats: dict[str, Any]
     naming_stats: dict[str, Any]
@@ -67,6 +68,7 @@ class ConvertResult:
             "actuators": self.actuator_stats,
             "ctrlrange": self.ctrlrange_stats,
             "contactExcludes": self.contact_stats,
+            "sites": self.site_stats,
             "collisionMasks": {k: (len(v) if isinstance(v, list) else v) for k, v in self.mask_stats.items()},
             "visualCollisionSplit": self.separation_stats,
             "naming": self.naming_stats,
@@ -461,10 +463,19 @@ def convert(cfg: config_mod.Config) -> ConvertResult:
                 root, cfg.mjcf.contact.excludes, notes=changes, strict=cfg.strict_patch
             )
 
-        # 6f) 通用补丁（最后，优先级最高）---------------------------------------
+        # 6f) 通用补丁（优先级最高，可能改名/删元素）-------------------------------
         if cfg.patch:
             changes.append("应用补丁（配置内联 patch）：")
             mjcf_edit.apply_patch(root, cfg.patch, notes=changes, strict=cfg.strict_patch)
+
+        # 6g) 补充 <site>（必须在补丁改名之后：配置里写的是产物最终 body 名）
+        site_stats: dict[str, Any] = {
+            "added": [], "skipped": [], "unknownBodies": [], "ambiguous": []
+        }
+        if cfg.mjcf.sites:
+            site_stats = mjcf_edit.add_sites(
+                root, cfg.mjcf.sites, notes=changes, strict=cfg.strict_patch
+            )
 
         mjcf_edit.dump_xml(tree, output)
 
@@ -489,6 +500,7 @@ def convert(cfg: config_mod.Config) -> ConvertResult:
         actuator_stats=actuator_stats,
         ctrlrange_stats=ctrlrange_stats,
         contact_stats=contact_stats,
+        site_stats=site_stats,
         mask_stats=mask_stats,
         separation_stats=separation_stats,
         naming_stats=naming_stats,

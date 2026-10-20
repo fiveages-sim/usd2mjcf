@@ -18,6 +18,11 @@
     "3) 因此这里**不需要**手写 mjcf.contact.excludes（W2 才需要：那边自碰撞是开着的，",
     "   只是底盘/轮的形状级过滤没表达完整）。",
     "",
+    "4) TCP/EEF 标记点：Newton 的 MJCF 出口不保留 USD 里的 site，这里用 mjcf.sites 补。",
+    "   TCP 挂在腕部 link7，EEF 挂在夹爪 base；EE=None 时夹爪 body 不存在，",
+    "   所以 EEF 规则标了 optional（body 缺失只记日志、不告警）。",
+    "   注意 S2 的 TCP 带 quat，W2 的不带 —— 与参考产物保持一致。",
+    "",
     "换硬件：改 usd.variants（Arm_Left / Arm_Right / Head / Torso / EE）。",
     "  EE 可选：AG2F90 | AG2F120S | RG75 | LinkerHand_o6/o7 | Xhand1 | wuji_hand2 |",
     "           hook_type1 | scoop_type1 | concave_type1 | None",
@@ -31,13 +36,47 @@
       "Arm_Right": "M6_CCS",
       "Head": "v1",
       "Torso": "default",
-      "EE": "AG2F90"
+      "EE": "None"
     }
   },
 
   "mjcf": {
     "name_from_usd": ["joint", "body"],
     "actuator_names": "joint",
+    "sites": [
+      {
+        "name": "LEFT_TCP_SITE",
+        "body": "left_link7",
+        "pos": [0, -0.095, 0],
+        "quat": [0.5, 0.5, -0.5, 0.5],
+        "size": 0.005,
+        "rgba": [0.2, 0.9, 0.2, 0.5]
+      },
+      {
+        "name": "LEFT_EEF_SITE",
+        "body": "left_gripper_gripper_base",
+        "pos": [0, 0, 0.19],
+        "size": 0.005,
+        "rgba": [0.2, 0.9, 0.2, 0.5],
+        "optional": true
+      },
+      {
+        "name": "RIGHT_TCP_SITE",
+        "body": "right_link7",
+        "pos": [0, -0.095, 0],
+        "quat": [0.5, 0.5, -0.5, 0.5],
+        "size": 0.005,
+        "rgba": [0.2, 0.9, 0.2, 0.5]
+      },
+      {
+        "name": "RIGHT_EEF_SITE",
+        "body": "right_gripper_gripper_base",
+        "pos": [0, 0, 0.19],
+        "size": 0.005,
+        "rgba": [0.2, 0.9, 0.2, 0.5],
+        "optional": true
+      }
+    ],
     "scene": {
       "timestep": 0.002
     }
