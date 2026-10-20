@@ -1,0 +1,110 @@
+{
+  "_comment": [
+    "FiveAges W2（轮式双臂人形）示例配置 —— 重点演示“换硬件”和“有意偏离”。",
+    "",
+    "本地资产：~/FaSim-Isaac/robots/humanoid/FiveAges/Gen2/W2/FiveAges_W2.usda",
+    "（这个资产里带了完整的 mjc: 授权：MjcActuator / MjcJointAPI，",
+    "  执行器增益、力限、armature、damping 都会被原样搬到 MJCF。）",
+    "",
+    "variant 一览（不写就用 USD 里作者授权的选择）：",
+    "  Physics   : mujoco | physics | physx | none   ← 必须用 mujoco（唯一带 mjc: 的层）",
+    "  Chassis   : LinkhouS2_V1 | LinkhouS2_V2 | None",
+    "  Arm_Left/Right : M6_CCS | ART7 | AR5_CCS_V2 | M20S_CCS | None",
+    "  Head      : v1 | None",
+    "  EE        : AG2F90 | AG2F120S | RG75 | LinkerHand_o6/o7 | Xhand1 |",
+    "              wuji_hand2 | hook_type1 | scoop_type1 | concave_type1 | None",
+    "  Visual    : default | anigon | white   /  Mesh 类视觉精度同理",
+    "",
+    "换夹爪示例：把下面的 EE 改成 AG2F120S 即可（关节/执行器/mimic 会跟着变）。",
+    "",
+    "patch 段只写“确实要偏离 USD”的项：",
+    "",
+    "1) rename —— 命名后处理。工具默认已把 Newton 的下划线路径名还原成 USD prim 叶子名",
+    "   （joint: left_joint1 / body: Left_Arm_link1 —— 后者加长了，因为两侧 body 在 USD 里",
+    "   都叫 link1，只能靠 Left_Arm_/Right_Arm_ 区分）。这里再用正则把它们统一成小写前缀，",
+    "   并把 Newton 自己合成的 float-base 关节 joint_1 改成语义名。",
+    "   ⚠️ 规则**按顺序**施加，后面的规则看到的是前面的结果，所以特例要写在前面。",
+    "   ⚠️ 替换串支持反向引用（JSON 里写 \\\\1）。",
+    "",
+    "2) 驱动轮 —— 唯一一处刻意偏离 USD：",
+    "   Isaac 给驱动轮的是 kv=100 + 力矩 ±1000 N·m + ctrl 不限幅；RL 里 ctrl 由策略自由",
+    "   输出，力矩会长期贴在上限。这里改成速度伺服 kv=20 / ±100 N·m / ±15 rad/s",
+    "   （15 rad/s × 轮半径 ≈ 1 m/s，是这类底盘合理的线速度上限）。"
+  ],
+
+  "usd": {
+    "variants": {
+      "Physics": "mujoco",
+      "Chassis": "LinkhouS2_V1",
+      "Arm_Left": "M6_CCS",
+      "Arm_Right": "M6_CCS",
+      "Head": "v1",
+      "EE": "AG2F90"
+    },
+    "collision_mode": "enable"
+  },
+
+  "mjcf": {
+    "name_from_usd": ["joint", "body"],
+    "actuator_names": "joint",
+    "scene": {
+      "timestep": 0.002
+    },
+    "contact": {
+      "_comment": [
+        "额外碰撞排除。USD 的排除是形状级的，Newton 只在“一对 body 的所有 shape",
+        "组合都被过滤”时才生成 body 级 exclude；下面这些部位物理上必然重叠，",
+        "但 USD 没写成形状级过滤，所以要在这里补：",
+        "  1) 底盘 × 腰部升降：升降柱坐在底盘壳内",
+        "  2) 底盘 × 驱动轮：轮子碰撞体被重开后与底盘壳体相交",
+        "  3) 底盘 × 转向节：转向节装在底盘内部",
+        "注意：这里写的是**产物里的 body 名**（已做过名字还原），两侧都支持 glob。"
+      ],
+      "excludes": [
+        ["base_footprint", "body_link1"],
+        ["base_footprint", "*_wheel"],
+        ["base_footprint", "*_steer"],
+        ["base_link", "*_wheel"],
+        ["base_link", "*_steer"]
+      ]
+    }
+  },
+
+  "patch": {
+    "option": {
+      "integrator": "implicitfast"
+    },
+    "rename": {
+      "body": [
+        { "pattern": "^Left_Arm_link7_tcp_AG2F90_", "replacement": "left_gripper_" },
+        { "pattern": "^Right_Arm_link7_tcp_AG2F90_", "replacement": "right_gripper_" },
+        { "pattern": "^Left_Arm_", "replacement": "left_" },
+        { "pattern": "^Right_Arm_", "replacement": "right_" }
+      ],
+      "joint": [
+        { "pattern": "^joint_1$", "replacement": "base_freejoint" }
+      ]
+    },
+    "joints": [
+      {
+        "match": { "name": "*_wheel_joint" },
+        "actuatorfrcrange": [-100, 100]
+      }
+    ],
+    "actuators": [
+      {
+        "match": { "joint": "*_wheel_joint" },
+        "type": "velocity",
+        "kv": 20,
+        "forcerange": [-100, 100],
+        "ctrlrange": [-15, 15]
+      }
+    ]
+  },
+
+  "verify": {
+    "enabled": true,
+    "render": true,
+    "smoke_steps": 200
+  }
+}

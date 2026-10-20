@@ -1,0 +1,67 @@
+{
+  "_comment": [
+    "FiveAges S2（固定立柱双臂人形）示例配置。",
+    "",
+    "本地资产：~/FaSim-Isaac/robots/humanoid/FiveAges/Gen2/S2/FiveAges_S2.usda",
+    "",
+    "与 W2 的三个关键差异：",
+    "",
+    "1) 固定基座：没有 freejoint，根 joint 是滑轨 lift_joint（0..0.29 m）。",
+    "   不要再加 mohu worldbody freejoint。",
+    "",
+    "2) USD 里 newton:selfCollisionEnabled = 0（整机自碰撞关闭）。Newton 会因此给全部",
+    "   body 对生成形状级过滤；导出时掩码编译器把这 34 个碰撞体的 contype/conaffinity",
+    "   全算成 0 —— 那等于“连地面都不碰”。工具会自动把真正的碰撞体恢复成 1/1，",
+    "   自碰撞排除仍由 <contact><exclude> 表达（USD 本来就把 900 多对写进去了）。",
+    "   实测：抬高地面后与地面 4 个接触、整机内部 0 个接触 —— 语义正确。",
+    "",
+    "3) 因此这里**不需要**手写 mjcf.contact.excludes（W2 才需要：那边自碰撞是开着的，",
+    "   只是底盘/轮的形状级过滤没表达完整）。",
+    "",
+    "换硬件：改 usd.variants（Arm_Left / Arm_Right / Head / Torso / EE）。",
+    "  EE 可选：AG2F90 | AG2F120S | RG75 | LinkerHand_o6/o7 | Xhand1 | wuji_hand2 |",
+    "           hook_type1 | scoop_type1 | concave_type1 | None",
+    "  换夹爪后关节/执行器/mimic 会跟着变（14 条 <equality> 是夹爪的从动指）。"
+  ],
+
+  "usd": {
+    "variants": {
+      "Physics": "mujoco",
+      "Arm_Left": "M6_CCS",
+      "Arm_Right": "M6_CCS",
+      "Head": "v1",
+      "Torso": "default",
+      "EE": "AG2F90"
+    }
+  },
+
+  "mjcf": {
+    "name_from_usd": ["joint", "body"],
+    "actuator_names": "joint",
+    "scene": {
+      "timestep": 0.002
+    }
+  },
+
+  "patch": {
+    "option": {
+      "integrator": "implicitfast"
+    },
+    "rename": {
+      "_comment": "命名还原后的二次整理：臂前缀小写、躯干名去重、夹爪名压缩。规则按顺序施加。",
+      "body": [
+        { "pattern": "^Left_Arm_link7_tcp_AG2F90_", "replacement": "left_gripper_" },
+        { "pattern": "^Right_Arm_link7_tcp_AG2F90_", "replacement": "right_gripper_" },
+        { "pattern": "^Left_Arm_", "replacement": "left_" },
+        { "pattern": "^Right_Arm_", "replacement": "right_" },
+        { "pattern": "^Torso_stand_link3$", "replacement": "torso" }
+      ]
+    }
+  },
+
+  "verify": {
+    "enabled": true,
+    "render": true,
+    "smoke_steps": 200
+  }
+}

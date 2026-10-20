@@ -1,0 +1,85 @@
+{
+  "_comment": [
+    "usd2mjcf 配置文件（唯一旋钮面）。",
+    "CLI 只有三个参数：  usd2mjcf <输入.usda> <输出.xml> [本文件]",
+    "未出现的键取默认值；**拼错的键会给出显式警告**（不会静默忽略）。",
+    "建议流程：先不带配置跑一次 → 看 <输出>.report.json 里的 variants / scene /",
+    "collision 段 → 只把要覆盖的键写进配置。"
+  ],
+  "usd": {
+    "path": null,
+    "variants": {},
+    "solver_variants": [
+      "mujoco",
+      "newton"
+    ],
+    "collision_mode": "enable",
+    "fix_self_material_colliders": true,
+    "add_usd": {},
+    "download_dir": null,
+    "schema_priority": [
+      "mjc",
+      "newton",
+      "physx"
+    ]
+  },
+  "mjcf": {
+    "path": null,
+    "mesh_mode": "obj",
+    "inline_max_vertices": 2000,
+    "actuator_names": "joint",
+    "name_from_usd": [
+      "joint",
+      "body"
+    ],
+    "fix_ctrlrange": true,
+    "ctrlrange_auto_degrees": true,
+    "ctrlrange_from_joint": true,
+    "fix_zero_collision_masks": true,
+    "visuals": true,
+    "scene": {
+      "sync_from_usd": true,
+      "timestep": 0.002,
+      "iterations": null,
+      "gravity": null,
+      "flags": {},
+      "option": {},
+      "compiler": {}
+    },
+    "materials": {
+      "enabled": true,
+      "pbr": false,
+      "hide_colliders": true
+    },
+    "contact": {
+      "excludes": []
+    }
+  },
+  "patch": {},
+  "strict_patch": false,
+  "backend": "cuda",
+  "report": null,
+  "report_enabled": true,
+  "verbose": false,
+  "verify": {
+    "enabled": true,
+    "render": true,
+    "gl": null,
+    "smoke_steps": 200,
+    "views": [
+      [
+        135.0,
+        -20.0
+      ],
+      [
+        45.0,
+        -10.0
+      ],
+      [
+        225.0,
+        0.0
+      ]
+    ],
+    "render_dir": null
+  }
+}
