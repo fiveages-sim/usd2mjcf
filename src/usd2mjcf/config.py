@@ -69,6 +69,11 @@ class UsdConfig:
     solver_variants: list[str] = field(default_factory=lambda: ["mujoco", "newton"])
     #: enable=重开被资产禁用的碰撞体（默认）；respect=完全按 USD
     collision_mode: str = "enable"
+    #: 碰撞网格凸包的最大顶点数（Newton `mesh_maxhullvert`）。None = 沿用 Newton 默认（64）。
+    #: 设置后会**同时覆盖** USD 里作者授权的上限（mjc:maxhullvert /
+    #: newton:maxHullVertices / physxConvexHullCollision:hullVertexLimit），
+    #: 否则作者写死的更小值优先。顶点太少时凸包会不对称地切掉底面角部（支撑面变小）。
+    max_hull_vertices: int | None = None
     #: 这些碰撞体自带 NewtonMaterialAPI 时会被 Newton 丢弃（轮子就是这种情况），
     #: 这里把它们转成普通碰撞体 + 独立材质 prim
     fix_self_material_colliders: bool = True
@@ -134,7 +139,8 @@ class MjcfConfig:
     fix_zero_collision_masks: bool = True
     #: 是否导出仅用于可视化的几何（关掉可显著减小产物，适合纯 RL 训练）
     visuals: bool = True
-    #: 往指定 body 里补 `<site>`（TCP / EEF 等标记点）。每条的结构见 README §6.4
+    #: 往指定 body 里补 `<site>`（TCP / EEF 等标记点）。每条的结构见
+    #: `doc/configuration.md` 的“mjcf.sites 段”
     sites: list[dict[str, Any]] = field(default_factory=list)
     scene: SceneConfig = field(default_factory=SceneConfig)
     materials: MaterialConfig = field(default_factory=MaterialConfig)
@@ -155,7 +161,7 @@ class VerifyConfig:
 class Config:
     usd: UsdConfig = field(default_factory=UsdConfig)
     mjcf: MjcfConfig = field(default_factory=MjcfConfig)
-    #: 通用补丁（结构见 README §6），写在配置里就不用额外文件
+    #: 通用补丁（结构见 `doc/configuration.md` 的“patch 段”），写在配置里就不用额外文件
     patch: dict[str, Any] = field(default_factory=dict)
     strict_patch: bool = False
     #: cuda | cpu —— 决定 SolverMuJoCo 用 mujoco-warp 还是 MuJoCo-C 后端
@@ -283,6 +289,13 @@ def validate(cfg: Config) -> list[str]:
     problems: list[str] = []
     if cfg.usd.collision_mode not in ("enable", "respect"):
         problems.append(f"usd.collision_mode: 只能是 enable/respect，收到 {cfg.usd.collision_mode!r}")
+    hull = cfg.usd.max_hull_vertices
+    if hull is not None and (
+        isinstance(hull, bool) or not isinstance(hull, int) or hull < 5
+    ):
+        problems.append(
+            f"usd.max_hull_vertices: 需要 >= 5 的整数（null=Newton 默认），收到 {hull!r}"
+        )
     if cfg.mjcf.mesh_mode not in ("obj", "inline"):
         problems.append(f"mjcf.mesh_mode: 只能是 obj/inline，收到 {cfg.mjcf.mesh_mode!r}")
     if cfg.mjcf.actuator_names not in ("joint", "none"):
@@ -337,22 +350,23 @@ CLI 只有三个参数：usd2mjcf <输入.usda> <输出.xml> [本文件]
 
 
 def example_config() -> Config:
-    """给 `config.example.json` 用的参考配置：**全部默认值**。
+    """给 `config/config.example.json` 用的参考配置：**全部默认值**。
 
     刻意不塞机型相关的覆盖项 —— 具体怎么换变体 / 加排除 / 写补丁，见
-    `examples/fiveages_w2/config.json`。这样示例文件只承担"键表"职责，
+    `config/fiveages_w2/config.json`。这样示例文件只承担"键表"职责，
     不会因为换机型而误导。
     """
     return Config()
 
 
 def describe() -> list[tuple[str, str]]:
-    """(配置键, 说明) 列表 —— 用于 README / 文档生成。"""
+    """(配置键, 说明) 列表 —— 用于文档生成。"""
     return [
         ("usd.path", "输入 USD（也可由 CLI 第一个参数给出）"),
         ("usd.variants", "variant set → 取值；只写覆盖项，其余沿用 USD 的授权默认值"),
         ("usd.solver_variants", "无授权默认值时的自动优先顺序（默认 mujoco/newton）"),
         ("usd.collision_mode", "enable=重开被禁用的碰撞体；respect=完全按 USD"),
+        ("usd.max_hull_vertices", "碰撞网格凸包顶点上限（null=Newton 默认 64；设置后覆盖 USD 授权值）"),
         ("usd.fix_self_material_colliders", "修复自带 NewtonMaterialAPI 被丢弃的碰撞体"),
         ("usd.add_usd", "透传给 newton ModelBuilder.add_usd 的参数"),
         ("usd.download_dir", "远程 https USD 的下载目录（默认 ./.usd_cache）"),
@@ -373,7 +387,7 @@ def describe() -> list[tuple[str, str]]:
         ("mjcf.materials.pbr", "是否同时写 metallic/roughness"),
         ("mjcf.materials.hide_colliders", "碰撞体写入 group=3（默认不渲染）"),
         ("mjcf.contact.excludes", "额外碰撞排除 [[body1, body2], ...]，两侧支持 glob"),
-        ("patch", "通用补丁（match 用 glob；见 README §6）"),
+        ("patch", "通用补丁（match 用 glob；见文档中的补丁说明）"),
         ("strict_patch", "补丁规则未命中任何元素时直接报错"),
         ("backend", "cuda | cpu"),
         ("report / report_enabled", "转换报告 JSON 路径 / 是否生成"),

@@ -285,6 +285,18 @@ def convert(cfg: config_mod.Config) -> ConvertResult:
             f"collision_mode=respect：{len(muted)} 个被禁用的碰撞体不参与接触，模型可能无碰撞。"
         )
 
+    # 3b) 碰撞网格凸包精度（必须在 Newton 解析之前改 stage）---------------------
+    hull_overrides: list[dict[str, Any]] = []
+    if cfg.usd.max_hull_vertices is not None:
+        hull_overrides = usd_scene.override_max_hull_vertices(
+            stage, cfg.usd.max_hull_vertices
+        )
+        changes.append(
+            f"碰撞网格凸包顶点上限 = {cfg.usd.max_hull_vertices}"
+            f"（覆盖 {len(hull_overrides)} 个 USD 授权值；未授权的碰撞体走 "
+            "add_usd.mesh_maxhullvert）"
+        )
+
     # 4) 场景参数 + 材质（必须在 Newton 解析之前）-------------------------------
     settings, scene_prims = usd_scene.find_scene_settings(stage)
     scene_report = settings.as_dict()
@@ -307,13 +319,18 @@ def convert(cfg: config_mod.Config) -> ConvertResult:
     # 4b) 名字还原表（同样必须在 Newton 解析之前建好）
     prim_names = usd_scene.collect_prim_names(stage) if cfg.mjcf.name_from_usd else {}
 
+    # 4c) add_usd 参数：显式透传优先，`usd.max_hull_vertices` 只做兜底
+    add_usd_kwargs: dict[str, Any] = dict(cfg.usd.add_usd)
+    if cfg.usd.max_hull_vertices is not None:
+        add_usd_kwargs.setdefault("mesh_maxhullvert", cfg.usd.max_hull_vertices)
+
     # 5) Newton 解析 + 导出 ----------------------------------------------------
     try:
         model, _builder, import_result = build_newton_model(
             stage,
             schema_priority=cfg.usd.schema_priority,
             verbose=cfg.verbose,
-            add_usd_kwargs=cfg.usd.add_usd,
+            add_usd_kwargs=add_usd_kwargs,
         )
     except RuntimeError as exc:
         text = str(exc)
@@ -509,6 +526,8 @@ def convert(cfg: config_mod.Config) -> ConvertResult:
             "mutedInUsd": muted,
             "reopened": forced,
             "selfMaterialFixed": self_material,
+            "maxHullVertices": cfg.usd.max_hull_vertices,
+            "hullOverrides": hull_overrides,
         },
         changes=changes,
         warnings=warnings,

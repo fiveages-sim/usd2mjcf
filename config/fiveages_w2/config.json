@@ -2,7 +2,7 @@
   "_comment": [
     "FiveAges W2（轮式双臂人形）示例配置 —— 重点演示“换硬件”和“有意偏离”。",
     "",
-    "本地资产：~/FaSim-Isaac/robots/humanoid/FiveAges/Gen2/W2/FiveAges_W2.usda",
+    "本地资产：~/project/assets/FiveAges_W2.usda",
     "（这个资产里带了完整的 mjc: 授权：MjcActuator / MjcJointAPI，",
     "  执行器增益、力限、armature、damping 都会被原样搬到 MJCF。）",
     "",

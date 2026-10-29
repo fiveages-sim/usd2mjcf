@@ -2,12 +2,12 @@
   "_comment": [
     "FiveAges S2（固定立柱双臂人形）示例配置。",
     "",
-    "本地资产：~/FaSim-Isaac/robots/humanoid/FiveAges/Gen2/S2/FiveAges_S2.usda",
+    "本地资产：~/project/assets/FiveAges_S2.usda",
     "",
-    "与 W2 的三个关键差异：",
+    "与 W2 的几个关键差异：",
     "",
     "1) 固定基座：没有 freejoint，根 joint 是滑轨 lift_joint（0..0.29 m）。",
-    "   不要再加 mohu worldbody freejoint。",
+    "   不要再加 MuJoCo worldbody freejoint。",
     "",
     "2) USD 里 newton:selfCollisionEnabled = 0（整机自碰撞关闭）。Newton 会因此给全部",
     "   body 对生成形状级过滤；导出时掩码编译器把这 34 个碰撞体的 contype/conaffinity",
@@ -26,7 +26,11 @@
     "换硬件：改 usd.variants（Arm_Left / Arm_Right / Head / Torso / EE）。",
     "  EE 可选：AG2F90 | AG2F120S | RG75 | LinkerHand_o6/o7 | Xhand1 | wuji_hand2 |",
     "           hook_type1 | scoop_type1 | concave_type1 | None",
-    "  换夹爪后关节/执行器/mimic 会跟着变（14 条 <equality> 是夹爪的从动指）。"
+    "  换夹爪后关节/执行器/mimic 会跟着变（14 条 <equality> 是夹爪的从动指）。",
+    "",
+    "5) 碰撞网格凸包精度：Newton 默认把碰撞 mesh 的凸包压到 64 顶点，立柱底座的",
+    "   平整底面会被切成几块倾斜面片（落地轻微摇晃）。这里提到 512，并在 Newton",
+    "   解析前覆盖 USD 里作者授权的 newton:maxHullVertices / hullVertexLimit。"
   ],
 
   "usd": {
@@ -37,7 +41,8 @@
       "Head": "v1",
       "Torso": "default",
       "EE": "None"
-    }
+    },
+    "max_hull_vertices": 512
   },
 
   "mjcf": {

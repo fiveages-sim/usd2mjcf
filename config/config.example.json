@@ -1,10 +1,10 @@
 {
   "_comment": [
-    "usd2mjcf 配置文件（唯一旋钮面）。",
-    "CLI 只有三个参数：  usd2mjcf <输入.usda> <输出.xml> [本文件]",
-    "未出现的键取默认值；**拼错的键会给出显式警告**（不会静默忽略）。",
-    "建议流程：先不带配置跑一次 → 看 <输出>.report.json 里的 variants / scene /",
-    "collision 段 → 只把要覆盖的键写进配置。"
+    "usd2mjcf 配置文件。",
+    "命令行只有三个参数：  usd2mjcf <输入.usda> <输出.xml> [本文件]",
+    "未出现的键取默认值；写错的键会给出显式警告，不会被忽略。",
+    "建议流程：先不带配置跑一次，查看 <输出>.report.json 里的",
+    "variants / scene / collision 段，再只把要覆盖的键写进配置。"
   ],
   "usd": {
     "path": null,
@@ -14,6 +14,7 @@
       "newton"
     ],
     "collision_mode": "enable",
+    "max_hull_vertices": null,
     "fix_self_material_colliders": true,
     "add_usd": {},
     "download_dir": null,

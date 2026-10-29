@@ -745,6 +745,55 @@ def muted_colliders(stage: Any) -> list[str]:
     return out
 
 
+#: 凸包顶点上限在三种 schema 里的属性名（顺序 = 优先级）。覆盖时**三个都改**，
+#: 免得换了 schema resolver 优先级后又被作者值钉回去。
+MAX_HULL_ATTRS = (
+    "mjc:maxhullvert",
+    "newton:maxHullVertices",
+    "physxConvexHullCollision:hullVertexLimit",
+)
+
+
+def override_max_hull_vertices(stage: Any, limit: int) -> list[dict[str, Any]]:
+    """把所有碰撞体上**已授权**的凸包顶点上限统一改成 ``limit``。
+
+    为什么不能只传 `add_usd(mesh_maxhullvert=...)`：Newton 的 schema resolver 把
+    "作者授权值"排在调用方默认值之前，所以资产里写死的
+    ``newton:maxHullVertices`` / ``physxConvexHullCollision:hullVertexLimit``
+    会把上限钉在原地。典型症状：几万顶点的底盘碰撞网格被压到 64 顶点后，凸包会
+    不对称地切掉底面角部（支撑多边形缺角、支撑面变小）。
+
+    只改**已经存在**的属性；没授权上限的碰撞体由 ``mesh_maxhullvert`` 兜底。
+    """
+    overridden: list[dict[str, Any]] = []
+    for prim in stage.TraverseAll():
+        if "PhysicsCollisionAPI" not in (prim.GetAppliedSchemas() or []):
+            continue
+        for name in MAX_HULL_ATTRS:
+            attr = prim.GetAttribute(name)
+            try:
+                if not (attr and attr.HasAuthoredValue()):
+                    continue
+            except Exception:  # pragma: no cover - 坏 asset 容错
+                continue
+            try:
+                previous = attr.Get()
+            except Exception:  # pragma: no cover
+                previous = None
+            if previous == limit:
+                continue
+            attr.Set(limit)
+            overridden.append(
+                {
+                    "prim": prim.GetPath().pathString,
+                    "attribute": name,
+                    "from": previous,
+                    "to": limit,
+                }
+            )
+    return overridden
+
+
 def save_stage(stage: Any, dest: Path) -> Path:
     """把组合后的 stage 落盘（调试用；同时可给外部工具复用）。"""
     dest.parent.mkdir(parents=True, exist_ok=True)

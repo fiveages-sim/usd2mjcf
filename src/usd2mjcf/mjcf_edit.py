@@ -531,9 +531,10 @@ def apply_patch(
     notes: list[str] | None = None,
     strict: bool = False,
 ) -> list[str]:
-    """应用通用补丁。未命中任何元素的规则会被**显式警告**（本项目最恨静默失败）。
+    """应用通用补丁。未命中任何元素的规则会被**显式警告**（不静默失败）。
 
-    规则结构见 `README.md` §6 与 `examples/fiveages_w2/config.json` 里的 `patch` 段。
+    规则结构见 `doc/configuration.md` 的“patch 段”与
+    `config/fiveages_w2/config.json` 里的 `patch` 段。
     """
     log: list[str] = notes if notes is not None else []
     for section, spec in patch.items():

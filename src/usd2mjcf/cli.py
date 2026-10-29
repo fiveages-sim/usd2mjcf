@@ -6,7 +6,7 @@
 * 配置省略 → 全部用默认值（先跑一次，看 `<输出>.report.json` 里的 variants 段，
   再把要覆盖的键写进配置）；
 * 其余旋钮（variant 选择、碰撞体模式、网格外置、材质、补丁、验证…）**全在配置文件里**，
-  见 `config.example.json` 与 `config.py`。
+  见 `config/config.example.json` 与 `config.py`。
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def _build_parser():
             "  usd2mjcf robot.usda cfg.json               # 第二个参数是 .json 时按配置解析\n"
             "\n"
             "其余所有旋钮都在配置文件里：variant（换底盘/机械臂/夹爪）、碰撞体模式、\n"
-            "网格外置、材质、timestep、补丁、验证开关… 见 config.example.json。\n"
+            "网格外置、材质、timestep、补丁、验证开关… 见 config/config.example.json。\n"
             "每次转换都会写出 <输出>.report.json，里面有全部 variant 候选值、场景参数\n"
             "来源、碰撞体修复清单、材质/网格/执行器统计。"
         ),

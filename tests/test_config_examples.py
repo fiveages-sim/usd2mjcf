@@ -1,11 +1,11 @@
 """配置文件示例的“防漂移”测试。
 
-配置文件是本工具唯一的旋钮面，而 README/示例里的键名最容易随时间漂移成
-“拼错的键 + 静默不生效”。这里把仓库里所有示例配置都加载一遍，确保：
+配置文件是调整转换行为的唯一入口，而文档和示例里的键名最容易随时间漂移成
+“拼错的键 + 不生效”。这里把仓库里所有示例配置都加载一遍，确保：
 
 * 能被解析（合法 JSON + 合法取值）；
 * **没有未知键**（拼错会变成 problems 而不是被忽略）；
-* `config.example.json` 的键集合与 dataclass 完全一致（新增/删除键时会被逼着更新）。
+* `config/config.example.json` 的键集合与配置定义完全一致（新增或删除键时会被逼着更新）。
 """
 
 from __future__ import annotations
@@ -21,12 +21,12 @@ from usd2mjcf import config as config_mod
 REPO = Path(__file__).resolve().parents[1]
 
 EXAMPLE_CONFIGS = [
-    REPO / "config.example.json",
-    REPO / "examples" / "fiveages_w2" / "config.json",
-    REPO / "examples" / "fiveages_s2" / "config.json",
+    REPO / "config" / "config.example.json",
+    REPO / "config" / "fiveages_w2" / "config.json",
+    REPO / "config" / "fiveages_s2" / "config.json",
 ]
 
-#: examples 里 config.json 的注释键（加载器会忽略 _ 开头的键）
+#: config 里 config.json 的注释键（加载器会忽略 _ 开头的键）
 ALLOWED_COMMENT_KEYS = {"_comment"}
 
 
@@ -40,7 +40,7 @@ def test_example_config_has_no_unknown_keys(path: Path):
 
 def test_generated_example_matches_schema():
     """config.example.json 由 scripts/write_example_config.py 生成，键集必须与 schema 一致。"""
-    path = REPO / "config.example.json"
+    path = REPO / "config" / "config.example.json"
     raw = json.loads(path.read_text(encoding="utf-8"))
     expected = {f.name for f in fields(config_mod.Config)} | ALLOWED_COMMENT_KEYS
     assert set(raw) == expected, (
@@ -84,6 +84,20 @@ def test_validation_catches_bad_values(tmp_path: Path):
     _cfg, problems = config_mod.load(path)
     assert any("collision_mode" in p for p in problems)
     assert any("mesh_mode" in p for p in problems)
+
+
+def test_validation_catches_bad_hull_vertices(tmp_path: Path):
+    """凸包顶点上限必须是 >= 5 的整数（Newton 用 Qhull `TA{n}` 实现）。"""
+    bad = tmp_path / "bad_hull.json"
+    bad.write_text(json.dumps({"usd": {"max_hull_vertices": 4}}), encoding="utf-8")
+    _cfg, problems = config_mod.load(bad)
+    assert any("max_hull_vertices" in p for p in problems)
+
+    good = tmp_path / "ok_hull.json"
+    good.write_text(json.dumps({"usd": {"max_hull_vertices": 512}}), encoding="utf-8")
+    cfg, problems = config_mod.load(good)
+    assert problems == []
+    assert cfg.usd.max_hull_vertices == 512
 
 
 def test_strict_mode_raises(tmp_path: Path):

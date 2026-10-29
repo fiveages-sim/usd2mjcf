@@ -7,7 +7,7 @@ textures/
 
 # ── 远程资产缓存（大体积，转换时自动重建）──────────────────────────
 .usd_cache/
-examples/*/asset/
+config/*/asset/
 
 # ── Python 环境 ────────────────────────────────────────────────────────
 .venv/
@@ -21,3 +21,6 @@ __pycache__/
 *.log
 MUJOCO_LOG.TXT
 .DS_Store
+
+
+.vscode/
