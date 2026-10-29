@@ -114,6 +114,7 @@ USD 里可以有多个可切换的部分，例如底盘型号、左右机械臂�
 | `mesh_mode` | `"obj"` | `obj` 表示网格外置成文件，`inline` 表示写进 XML |
 | `inline_max_vertices` | `2000` | `inline` 模式下超过该顶点数的网格仍然外置 |
 | `actuator_names` | `"joint"` | `joint` 表示用所驱动的关节名命名执行器，`none` 表示不命名 |
+| `geom_names` | `"kind"` | `kind` 表示用 `VISUAL_<body>_<序号>` / `COLLISION_<body>_<序号>` 命名几何；`usd` 表示保留 Newton 生成的路径名 |
 | `name_from_usd` | `["joint", "body"]` | 把 Newton 生成的长名字还原成 USD 里的名字，作用对象可多选 |
 | `fix_ctrlrange` | `true` | 修正式执行器控制范围的单位问题和缺失 |
 | `ctrlrange_auto_degrees` | `true` | 判定为“度”时自动换算成弧度 |
@@ -139,6 +140,21 @@ Newton 会用“下划线加 prim 路径”的方式命名实体，产物里的�
 可选值：`joint`、`body`、`geom`、`site`、`mesh`、`tendon`、`actuator`。空列表表示完全不改名字。
 
 详细命名规则见[转换规则](conversion.md)中的“命名”一节。
+
+### geom_names
+
+控制几何的名字。默认值 `kind` 会统一成短名：
+
+- 视觉体：`VISUAL_<body>_<序号>`
+- 碰撞体：`COLLISION_<body>_<序号>`
+
+序号按同一个 body、同一类几何各自从 0 开始。网格本身的名字和 `mesh=` 引用不变。
+
+统一命名在补丁之后执行，所以名字里的 body 段是补丁改名后的最终 body 名。反过来，补丁里按名字匹配 geom 的规则（`patch.geoms`、`patch.rename.geom`）看到的仍是统一命名之前的名字；需要自己控制 geom 名字时，把 `mjcf.geom_names` 设为 `"usd"`。
+
+改成 `"usd"` 时保留 Newton 生成的路径名（例如 `/Robot/base/collisions/...`）。
+
+如果 `name_from_usd` 里包含 `geom`，还原出的 geom 名字也会被统一命名覆盖；想保留 USD 里的名字，需要同时把 `mjcf.geom_names` 设为 `"usd"`。
 
 ### fix_ctrlrange 与相关选项
 

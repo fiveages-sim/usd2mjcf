@@ -1106,6 +1106,129 @@ def separate_visual_collision(
 
 
 # ---------------------------------------------------------------------------
+# geom 统一命名
+# ---------------------------------------------------------------------------
+#: geom 命名方式：kind=按视觉体/碰撞体生成短名；usd=保留 Newton 生成的 prim 路径名
+GEOM_NAME_MODES = ("kind", "usd")
+
+
+def collision_geom_ids(root: ET.Element) -> set[int]:
+    """返回当前被判定为碰撞体的 geom 对象标识集合。
+
+    统一命名发生在流程末尾，此时 geom 名字可能已经被名字还原或补丁改写，
+    再靠名字里是否带碰撞路径来判断会出错。调用方在视觉/碰撞分组的时刻记下
+    这张表，分类就能保持稳定。
+    """
+    return {
+        id(geom)
+        for geom in _iter_targets(root, "geom")
+        if _is_collision_intent(geom)
+    }
+
+
+def _geom_kind(geom: ET.Element, collider_ids: set[int] | None) -> str:
+    """判定一个 geom 是 ``VISUAL`` 还是 ``COLLISION``。
+
+    ``collider_ids`` 是视觉/碰撞分组时记下的碰撞体集合。快照里的元素按快照判定
+    （即使后来名字或掩码被改写）；快照之外的元素（例如补丁新加的几何）回退到
+    当前的掩码和名字判断。
+    """
+    if collider_ids is not None and id(geom) in collider_ids:
+        return "COLLISION"
+    return "COLLISION" if _is_collision_intent(geom) else "VISUAL"
+
+
+def _body_geom_pairs(root: ET.Element) -> list[tuple[ET.Element, str]]:
+    """按文档顺序返回 (geom, 所属 body 名)。
+
+    worldbody 直属的几何（例如地面）归入 ``world``；frame 是容器，递归进去但
+    不改变所属 body。
+    """
+    worldbody = root.find("worldbody")
+    pairs: list[tuple[ET.Element, str]] = []
+    if worldbody is None:
+        return pairs
+
+    def walk(node: ET.Element, body_name: str) -> None:
+        for child in node:
+            if child.tag == "body":
+                walk(child, child.get("name") or body_name)
+            elif child.tag == "geom":
+                pairs.append((child, body_name))
+            elif child.tag == "frame":
+                walk(child, body_name)
+
+    walk(worldbody, "world")
+    return pairs
+
+
+def normalize_geom_names(
+    root: ET.Element,
+    *,
+    mode: str = "kind",
+    collider_ids: set[int] | None = None,
+    notes: list[str] | None = None,
+) -> dict[str, Any]:
+    """把 geom 名字统一成 ``VISUAL_<body>_<序号>`` / ``COLLISION_<body>_<序号>``。
+
+    序号按“同一个 body + 同一类几何”各自从 0 开始，顺序与文档一致，因此转换
+    结果可复现。mesh 名字保持不变，geom 上的 ``mesh=`` 引用也不动。
+
+    判断视觉体还是碰撞体沿用 :func:`_is_collision_intent` 的规则（掩码优先，
+    名字里带 ``/collisions/`` 兜底）。如果在视觉/碰撞分组时已经记下了碰撞体
+    集合（``collider_ids``），就优先用它，避免后续改名影响判断。这一步必须
+    放在补丁之后，补丁可能重命名 body，而 geom 名要使用最终的 body 名。
+
+    ``mode="usd"`` 时保持 Newton 生成的 prim 路径名，只返回统计。
+    """
+    log: list[str] = notes if notes is not None else []
+    if mode not in GEOM_NAME_MODES:
+        raise ValueError(f"geom 命名方式必须是 {GEOM_NAME_MODES} 之一，收到 {mode!r}")
+
+    stats: dict[str, Any] = {"mode": mode, "visual": 0, "collision": 0, "renamed": 0}
+    pairs = _body_geom_pairs(root)
+    if mode == "usd":
+        for geom, _body in pairs:
+            stats[_geom_kind(geom, collider_ids).lower()] += 1
+        log.append("  geom 命名：保留 prim 路径名（mode=usd）")
+        return stats
+
+    used = {geom.get("name") for geom in root.iter("geom") if geom.get("name")}
+    counters: dict[tuple[str, str], int] = {}
+    renames: dict[str, str] = {}
+    unnamed = 0
+
+    for geom, body in pairs:
+        kind = _geom_kind(geom, collider_ids)
+        index = counters.get((body, kind), 0)
+        counters[(body, kind)] = index + 1
+
+        candidate = f"{kind}_{body}_{index}"
+        suffix = 1
+        while candidate in used and candidate != geom.get("name"):
+            candidate = f"{kind}_{body}_{index}_{suffix}"
+            suffix += 1
+        used.add(candidate)
+
+        stats[kind.lower()] += 1
+        old = geom.get("name")
+        if old is None:
+            geom.set("name", candidate)
+            unnamed += 1
+        elif old != candidate:
+            renames[old] = candidate
+
+    renamed = _rename_tag(root, "geom", renames, log) if renames else 0
+    stats["renamed"] = renamed + unnamed
+    log.append(
+        f"  geom 命名：{stats['visual']} 个视觉体 → VISUAL_<body>_<序号>，"
+        f"{stats['collision']} 个碰撞体 → COLLISION_<body>_<序号>"
+        f"（共改写 {stats['renamed']} 个名字）"
+    )
+    return stats
+
+
+# ---------------------------------------------------------------------------
 # 执行器命名
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------

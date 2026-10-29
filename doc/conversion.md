@@ -82,6 +82,21 @@ _FiveAges_W2_Left_Arm_joints_left_joint1
 
 同一个实体可以写多条规则，按顺序生效。替换文本支持正则反向引用。规则没有命中任何名字时会给出警告。
 
+### 几何命名
+
+几何的名字默认统一成短名：
+
+- 视觉体：`VISUAL_<body>_<序号>`
+- 碰撞体：`COLLISION_<body>_<序号>`
+
+例如 `VISUAL_base_footprint_0`、`VISUAL_base_footprint_1`、`COLLISION_base_footprint_0`。序号按同一个 body 和同一类几何各自从 0 开始，顺序与文件中出现的顺序一致，所以多次转换的结果相同。
+
+判断一个几何是视觉体还是碰撞体，依据是碰撞掩码，掩码为 0 时再看名字里是否带碰撞路径。这一步在掩码修复、视觉与碰撞分组和补丁之后执行：一方面要能分清两类几何，另一方面要让 geom 名里的 body 段使用补丁改名后的最终 body 名。
+
+网格（mesh）的名字保持不变，几何上的 `mesh=` 引用也不动。配置里需要暂时保留原路径名时，把 `mjcf.geom_names` 设为 `"usd"`。
+
+补丁里的 `geoms` 规则和 `rename.geom` 看到的是统一命名之前的名字；需要自己控制 geom 名字时，同样把 `mjcf.geom_names` 设为 `"usd"`。
+
 ## 执行器
 
 ### 为什么产物里是 `<general>`
@@ -240,6 +255,7 @@ Newton 的写出接口不会保留 USD 里的 site 和变换标记，TCP、末�
 | `collision` | 碰撞体模式、被禁用和重新打开的路径、自带材质修复、凸包顶点上限与覆盖记录 |
 | `collisionMasks` | 掩码修复涉及的几何 |
 | `visualCollisionSplit` | 视觉体与碰撞体的数量 |
+| `geomNames` | 几何统一命名的数量和方式 |
 | `materials` | 材质和贴图统计 |
 | `meshes` | 网格外置统计 |
 | `actuators` | 执行器命名统计 |

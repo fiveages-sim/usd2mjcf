@@ -109,6 +109,7 @@ uv run usd2mjcf ~/project/assets/robot.usda ~/project/out/robot.xml
 | 重新打开被资产禁用的碰撞体 | `usd.collision_mode` |
 | 把网格写成单独文件或塞进 XML | `mjcf.mesh_mode` |
 | 调整名字 | `mjcf.name_from_usd` 和 `patch.rename` |
+| 简化几何名字 | `mjcf.geom_names` |
 | 修正执行器控制范围 | `mjcf.fix_ctrlrange` 等 |
 | 补充 TCP、相机等标记点 | `mjcf.sites` |
 | 增加额外碰撞排除 | `mjcf.contact.excludes` |

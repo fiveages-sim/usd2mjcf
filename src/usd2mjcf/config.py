@@ -126,6 +126,9 @@ class MjcfConfig:
     inline_max_vertices: int = 2000
     #: joint=执行器用所驱动 joint 的名字命名；none=不命名
     actuator_names: str = "joint"
+    #: geom 命名方式：kind=`VISUAL_<body>_<序号>` / `COLLISION_<body>_<序号>`；
+    #: usd=保留 Newton 生成的 prim 路径名
+    geom_names: str = "kind"
     #: 把 Newton 生成的下划线路径名换回 USD prim 叶子名（如 fl_steer_joint）。
     #: 可用项：joint / body / geom / site / mesh；空列表=不改名
     name_from_usd: list[str] = field(default_factory=lambda: ["joint", "body"])
@@ -300,6 +303,8 @@ def validate(cfg: Config) -> list[str]:
         problems.append(f"mjcf.mesh_mode: 只能是 obj/inline，收到 {cfg.mjcf.mesh_mode!r}")
     if cfg.mjcf.actuator_names not in ("joint", "none"):
         problems.append(f"mjcf.actuator_names: 只能是 joint/none，收到 {cfg.mjcf.actuator_names!r}")
+    if cfg.mjcf.geom_names not in ("kind", "usd"):
+        problems.append(f"mjcf.geom_names: 只能是 kind/usd，收到 {cfg.mjcf.geom_names!r}")
     allowed_tags = {"joint", "body", "geom", "site", "mesh", "tendon", "actuator"}
     unknown = [t for t in cfg.mjcf.name_from_usd if t not in allowed_tags]
     if unknown:
@@ -375,6 +380,7 @@ def describe() -> list[tuple[str, str]]:
         ("mjcf.mesh_mode", "obj=网格外置为 .obj；inline=写进 XML"),
         ("mjcf.inline_max_vertices", "inline 模式下超过该顶点数的网格仍然外置"),
         ("mjcf.actuator_names", "joint=用驱动的 joint 名命名执行器；none=不命名"),
+        ("mjcf.geom_names", "kind=VISUAL/COLLISION_<body>_<序号>；usd=保留 prim 路径名"),
         ("mjcf.name_from_usd", "把下划线路径名还原为 USD prim 叶子名（joint/body/geom/...）"),
         ("mjcf.fix_ctrlrange", "修正执行器 ctrlrange（单位混用 / 缺失）"),
         ("mjcf.ctrlrange_auto_degrees", "跨度比≈180/π 时把 ctrlrange 由度换算为弧度"),

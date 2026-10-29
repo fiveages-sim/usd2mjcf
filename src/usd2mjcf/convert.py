@@ -45,6 +45,7 @@ class ConvertResult:
     site_stats: dict[str, Any]
     mask_stats: dict[str, Any]
     separation_stats: dict[str, Any]
+    geom_name_stats: dict[str, Any]
     naming_stats: dict[str, Any]
     collision: dict[str, Any]
     changes: list[str]
@@ -71,6 +72,7 @@ class ConvertResult:
             "sites": self.site_stats,
             "collisionMasks": {k: (len(v) if isinstance(v, list) else v) for k, v in self.mask_stats.items()},
             "visualCollisionSplit": self.separation_stats,
+            "geomNames": self.geom_name_stats,
             "naming": self.naming_stats,
             "changes": self.changes,
             "warnings": self.warnings,
@@ -444,6 +446,9 @@ def convert(cfg: config_mod.Config) -> ConvertResult:
             hide_colliders=cfg.mjcf.materials.hide_colliders,
             notes=changes,
         )
+        # 记下此刻的碰撞体，供最后的统一命名使用：后续的名字还原或补丁可能改写
+        # geom 名字，届时再靠名字判断视觉/碰撞会出错。
+        collider_ids = mjcf_edit.collision_geom_ids(root)
 
         # 6d) 执行器 ctrlrange：单位修正 + 缺失补齐（必须在改名之前，按原 joint 名匹配）
         ctrlrange_stats: dict[str, Any] = {"converted": [], "filled": [], "unlimited": []}
@@ -464,6 +469,7 @@ def convert(cfg: config_mod.Config) -> ConvertResult:
             )
         named = mjcf_edit.name_actuators(root, cfg.mjcf.actuator_names, notes=changes)
         actuator_stats = {"named": named, "mode": cfg.mjcf.actuator_names}
+
         # 6d) 网格外置 ----------------------------------------------------------
         mesh_stats = mjcf_edit.externalize_meshes(
             root,
@@ -494,6 +500,16 @@ def convert(cfg: config_mod.Config) -> ConvertResult:
                 root, cfg.mjcf.sites, notes=changes, strict=cfg.strict_patch
             )
 
+        # 6h) geom 统一命名 -----------------------------------------------------
+        # 必须放在补丁之后：补丁可能重命名 body，geom 名要使用最终的 body 名；
+        # 同时必须晚于材质匹配、掩码修复与视觉/碰撞分组（它们都按旧名字工作）。
+        geom_name_stats = mjcf_edit.normalize_geom_names(
+            root,
+            mode=cfg.mjcf.geom_names,
+            collider_ids=collider_ids,
+            notes=changes,
+        )
+
         mjcf_edit.dump_xml(tree, output)
 
     # 7) 复核产物 --------------------------------------------------------------
@@ -520,6 +536,7 @@ def convert(cfg: config_mod.Config) -> ConvertResult:
         site_stats=site_stats,
         mask_stats=mask_stats,
         separation_stats=separation_stats,
+        geom_name_stats=geom_name_stats,
         naming_stats=naming_stats,
         collision={
             "mode": cfg.usd.collision_mode,

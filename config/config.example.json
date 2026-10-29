@@ -29,6 +29,7 @@
     "mesh_mode": "obj",
     "inline_max_vertices": 2000,
     "actuator_names": "joint",
+    "geom_names": "kind",
     "name_from_usd": [
       "joint",
       "body"
