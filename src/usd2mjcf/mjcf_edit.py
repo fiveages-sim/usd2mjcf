@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import fnmatch
+import itertools
 import re
 import xml.etree.ElementTree as ET
 from copy import deepcopy
@@ -196,8 +197,8 @@ def fix_zero_collision_masks(
 ) -> dict[str, Any]:
     """把"本应碰撞但掩码被算成 0"的 geom 恢复成可碰撞。
 
-    背景：USD 里 `newton:selfCollisionEnabled = 0`（整机自碰撞关闭）时，Newton 会为
-    该 articulation 的**所有** body 对生成形状级过滤。导出时
+    常见原因：USD 里 `newton:selfCollisionEnabled = 0`（整机自碰撞关闭）时，Newton
+    会为该 articulation 的**所有** body 对生成形状级过滤。导出时
     `SolverMuJoCo` 用这些过滤对编译 `contype`/`conaffinity`：
 
     * 过滤对稀疏（W2：33 对 / 40 个碰撞体）→ 每个形状分到若干位，正常工作；
@@ -209,6 +210,9 @@ def fix_zero_collision_masks(
     正确语义是：「与**环境**碰撞，但**自身**各 body 之间不碰」—— MuJoCo 里应该用
     `contype=conaffinity=<mask>` + `<contact><exclude>`（Newton 已经把这些 body 对写成
     exclude 了）。所以这里只把**真正的碰撞体**的掩码从 0 恢复成 ``mask``，视觉体不动。
+
+    注意：这个函数只修 **0** 掩码。Newton 编译出的非零位掩码由
+    :func:`normalize_collision_masks` 在不改变碰撞关系时统一成 1/1。
 
     ``colliders`` 是 Newton 模型里带 ``COLLIDE_SHAPES`` 标志的 shape label 集合
     （见 :func:`convert.collider_labels`）。XML 里的 geom 名可能带 ``_N`` 去重后缀，
@@ -246,7 +250,7 @@ def fix_zero_collision_masks(
     if fixed:
         log.append(
             f"  碰撞掩码修复：{len(fixed)} 个碰撞体的 contype/conaffinity 为 0"
-            f"（USD 关闭自碰撞导致 Newton 把掩码全算成 0），已恢复为 {mask}/{mask}；"
+            f"（Newton 编译碰撞图时算成 0，连地面都不碰），已恢复为 {mask}/{mask}；"
             "自碰撞排除由 <contact><exclude> 表达。"
         )
     return {"fixed": fixed, "candidates": candidates}
@@ -455,6 +459,138 @@ def prune_redundant_excludes(
             f"  清理冗余 <exclude>：{result['removed']} 条"
             f"（父子 body 对 {result['parent']} 条，无碰撞体 body 对 {result['vacuous']} 条）；"
             f"保留 {result['kept']} 条真实过滤"
+        )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# 碰撞掩码统一
+# ---------------------------------------------------------------------------
+def _geom_masks(geom: ET.Element) -> tuple[int, int]:
+    """返回 geom 的有效 (contype, conaffinity)；缺省按 MuJoCo 默认的 1/1。"""
+    contype = geom.get("contype")
+    conaffinity = geom.get("conaffinity")
+    try:
+        return (
+            1 if contype is None else int(contype),
+            1 if conaffinity is None else int(conaffinity),
+        )
+    except ValueError:
+        return 1, 1
+
+
+def _masks_allow(geom1: ET.Element, geom2: ET.Element) -> bool:
+    """按 MuJoCo 的位掩码规则判断两个 geom 是否允许接触。"""
+    contype1, conaffinity1 = _geom_masks(geom1)
+    contype2, conaffinity2 = _geom_masks(geom2)
+    return bool((contype1 & conaffinity2) or (contype2 & conaffinity1))
+
+
+def _contact_excludes(root: ET.Element) -> set[frozenset[str]]:
+    """读出 `<contact><exclude>` 的 body 对集合。"""
+    contact = root.find("contact")
+    if contact is None:
+        return set()
+    return {
+        frozenset((node.get("body1"), node.get("body2")))
+        for node in contact
+        if node.tag == "exclude" and node.get("body1") and node.get("body2")
+    }
+
+
+def normalize_collision_masks(
+    root: ET.Element,
+    *,
+    notes: list[str] | None = None,
+) -> dict[str, Any]:
+    """把碰撞掩码统一成 ``contype=1 conaffinity=1`` —— **仅在不改变碰撞关系时**。
+
+    Newton 会把形状级过滤编译成一组位掩码。值是正确的，但同一个模型里每个碰撞体
+    的 ``contype``/``conaffinity`` 都可能不同，非常难读。
+
+    这里先比较两种表示：
+
+    1. 当前的位掩码；
+    2. 全部写成 1/1，再叠加 ``filterparent``（父子过滤）和现有的
+       ``<contact><exclude>``。
+
+    如果两者对**所有非父子、未排除的 body 对**都允许全部 geom 组合，说明位掩码
+    只是冗余编码，可以安全统一。否则保留原样，避免丢掉真正的形状级过滤（例如同一
+    对 body 里只有部分 geom 需要互斥）。
+    """
+    log: list[str] = notes if notes is not None else []
+    result: dict[str, Any] = {"normalized": False, "geoms": 0, "mismatches": []}
+
+    filterparent = True
+    option = root.find("option")
+    if option is not None:
+        flag = option.find("flag")
+        value = flag.get("filterparent") if flag is not None else None
+        if value is not None:
+            try:
+                filterparent = parse_bool(value)
+            except ValueError:
+                filterparent = True
+
+    parents = {
+        body.get("name"): parent
+        for body, parent in _iter_worldbody_bodies(root)
+        if body.get("name")
+    }
+    body_geoms: dict[str, list[ET.Element]] = {}
+    for body, _parent in _iter_worldbody_bodies(root):
+        name = body.get("name")
+        if not name:
+            continue
+        geoms = [geom for geom in _body_direct_geoms(body) if _geom_can_collide(geom)]
+        if geoms:
+            body_geoms[name] = geoms
+
+    excludes = _contact_excludes(root)
+    mismatches: list[dict[str, Any]] = []
+    for body1, body2 in itertools.combinations(sorted(body_geoms), 2):
+        if frozenset((body1, body2)) in excludes:
+            continue
+        if filterparent and (parents.get(body1) == body2 or parents.get(body2) == body1):
+            continue
+        geoms1, geoms2 = body_geoms[body1], body_geoms[body2]
+        total = len(geoms1) * len(geoms2)
+        allowed = sum(1 for geom1 in geoms1 for geom2 in geoms2 if _masks_allow(geom1, geom2))
+        if allowed != total:
+            mismatches.append(
+                {
+                    "body1": body1,
+                    "body2": body2,
+                    "allowed": allowed,
+                    "total": total,
+                }
+            )
+
+    result["mismatches"] = mismatches
+    if mismatches:
+        sample = ", ".join(
+            f"{item['body1']} × {item['body2']} ({item['allowed']}/{item['total']})"
+            for item in mismatches[:3]
+        )
+        log.append(
+            f"  碰撞掩码保持原样：{len(mismatches)} 个非父子 body 对存在形状级过滤，"
+            f"统一成 1/1 会改变碰撞关系。例：{sample}"
+        )
+        return result
+
+    count = 0
+    for geoms in body_geoms.values():
+        for geom in geoms:
+            geom.set("contype", "1")
+            geom.set("conaffinity", "1")
+            count += 1
+    result["normalized"] = True
+    result["geoms"] = count
+    if count:
+        log.append(
+            f"  碰撞掩码统一：{count} 个碰撞体写为 contype=1 conaffinity=1"
+            "（与当前过滤图等价；父子 body 对由 filterparent 过滤，"
+            "其余排除由 <contact><exclude> 表达）"
         )
     return result
 
@@ -1166,15 +1302,16 @@ COLLIDER_RGBA = (0.35, 0.35, 0.38, 1.0)
 
 
 def _is_collision_intent(geom: ET.Element) -> bool:
-    """判断一个 geom 的**意图**是不是碰撞体。
+    """判断一个 geom 是否真的参与碰撞：只看有效掩码。
 
-    优先看碰撞掩码；但 USD 里被 `collisionEnabled=0` 掉、或 Newton 直接丢弃的碰撞体，
-    掩码会是 0，所以再用名字（`/collisions/`）兜底 —— 这类几何也不应该显出来。
+    掩码为 0/0 的几何不产生任何接触，必须按视觉体处理；名字里带 `collisions`
+    不能作为碰撞依据 —— 资产常把相机外壳、装饰件也放在 `collisions` 目录下，
+    这些 prim 没有 ``PhysicsCollisionAPI``，Newton 只把它们当成视觉网格。
+
+    USD 里被 ``physics:collisionEnabled=0`` 禁用的真正碰撞体，会在导入前由
+    ``collision_mode=enable`` 重新打开；如果最终仍是 0/0，说明它不是碰撞体。
     """
-    if geom.get("contype") not in (None, "0") or geom.get("conaffinity") not in (None, "0"):
-        return True
-    name = geom.get("name") or ""
-    return "/collisions/" in name or "/collision/" in name
+    return geom.get("contype") not in (None, "0") or geom.get("conaffinity") not in (None, "0")
 
 
 def separate_visual_collision(
@@ -1195,6 +1332,8 @@ def separate_visual_collision(
     USD 关闭自碰撞时会被 Newton 算成 0，需要先由
     :func:`fix_zero_collision_masks` 修复 —— 顺序反了就会把碰撞体当成视觉体（S2 就是
     这样把碰撞盒/碰撞圆柱暴露出来的）。
+
+    分类只看有效掩码：0/0 的几何即使名字里带 `collisions` 也按视觉体处理。
     """
     log: list[str] = notes if notes is not None else []
     colliders: list[str] = []
@@ -1301,10 +1440,10 @@ def normalize_geom_names(
     序号按“同一个 body + 同一类几何”各自从 0 开始，顺序与文档一致，因此转换
     结果可复现。mesh 名字保持不变，geom 上的 ``mesh=`` 引用也不动。
 
-    判断视觉体还是碰撞体沿用 :func:`_is_collision_intent` 的规则（掩码优先，
-    名字里带 ``/collisions/`` 兜底）。如果在视觉/碰撞分组时已经记下了碰撞体
-    集合（``collider_ids``），就优先用它，避免后续改名影响判断。这一步必须
-    放在补丁之后，补丁可能重命名 body，而 geom 名要使用最终的 body 名。
+    判断视觉体还是碰撞体只看有效掩码（见 :func:`_is_collision_intent`）。
+    如果在视觉/碰撞分组时已经记下了碰撞体集合（``collider_ids``），就优先用它，
+    避免后续改名影响判断。这一步必须放在补丁之后，补丁可能重命名 body，而 geom 名
+    要使用最终的 body 名。
 
     ``mode="usd"`` 时保持 Newton 生成的 prim 路径名，只返回统计。
     """

@@ -55,11 +55,11 @@ def test_names_follow_body_and_kind():
         "COLLISION_world_0",
         "COLLISION_base_footprint_0",
         "VISUAL_base_footprint_0",
-        "COLLISION_base_footprint_1",
+        "VISUAL_base_footprint_1",
         "VISUAL_arm_0",
         "COLLISION_arm_0",
     ]
-    assert stats == {"mode": "kind", "visual": 2, "collision": 4, "renamed": 6}
+    assert stats == {"mode": "kind", "visual": 3, "collision": 3, "renamed": 6}
 
 
 def test_mesh_names_and_references_unchanged():
@@ -103,8 +103,8 @@ def test_usd_mode_keeps_names():
     assert [geom.get("name") for geom in root.iter("geom")] == before
     assert stats["mode"] == "usd"
     assert stats["renamed"] == 0
-    assert stats["visual"] == 2
-    assert stats["collision"] == 4
+    assert stats["visual"] == 3
+    assert stats["collision"] == 3
 
 
 def test_collider_ids_take_priority_over_name_heuristic():

@@ -516,6 +516,17 @@ def convert(cfg: config_mod.Config) -> ConvertResult:
                 )
             )
 
+        # 6e2) 碰撞掩码统一：Newton 编译出的位掩码功能正确但难读。只有在“全部 1/1
+        # + filterparent + 现有 <exclude>”与当前过滤图完全等价时才改写；存在形状级
+        # 过滤时保留原掩码，避免改变碰撞关系。
+        mask_normalize_stats = mjcf_edit.normalize_collision_masks(root, notes=changes)
+        mask_stats["normalized"] = mask_normalize_stats
+        if not mask_normalize_stats["normalized"]:
+            warnings.append(
+                f"碰撞掩码未统一：{len(mask_normalize_stats['mismatches'])} 个非父子 "
+                "body 对存在形状级过滤，保留 Newton 编译的位掩码。"
+            )
+
         # 6f) 通用补丁（优先级最高，可能改名/删元素）-------------------------------
         if cfg.patch:
             changes.append("应用补丁（配置内联 patch）：")

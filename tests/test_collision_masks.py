@@ -85,3 +85,107 @@ def test_custom_mask():
     root = ET.fromstring(BASE.strip())
     mjcf_edit.fix_zero_collision_masks(root, COLLIDERS, mask=3)
     assert _geoms(root)["/Robot/base/collisions/base/mesh_0"].get("contype") == "3"
+
+
+NORMALIZE_BASE = """
+<mujoco>
+  <worldbody>
+    <body name="base">
+      <geom name="base_col" contype="2" conaffinity="-3"/>
+      <body name="arm">
+        <geom name="arm_col" contype="4" conaffinity="-5"/>
+      </body>
+    </body>
+    <body name="other">
+      <geom name="other_col" contype="8" conaffinity="-9"/>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def test_normalizes_equivalent_masks_to_one():
+    """位掩码只是冗余编码时，统一写成 1/1。"""
+    root = ET.fromstring(NORMALIZE_BASE.strip())
+    stats = mjcf_edit.normalize_collision_masks(root)
+
+    assert stats["normalized"] is True
+    assert stats["geoms"] == 3
+    assert _geoms(root)["base_col"].get("contype") == "1"
+    assert _geoms(root)["base_col"].get("conaffinity") == "1"
+    assert _geoms(root)["other_col"].get("contype") == "1"
+
+
+PARTIAL_FILTER = """
+<mujoco>
+  <worldbody>
+    <body name="a">
+      <geom name="a1" contype="1" conaffinity="1"/>
+      <geom name="a2" contype="1" conaffinity="0"/>
+    </body>
+    <body name="b">
+      <geom name="b1" contype="1" conaffinity="0"/>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def test_keeps_masks_when_shape_filter_changes_graph():
+    """只有部分 geom 组合允许接触时，统一成 1/1 会改变语义，必须保留原掩码。"""
+    root = ET.fromstring(PARTIAL_FILTER.strip())
+    stats = mjcf_edit.normalize_collision_masks(root)
+
+    assert stats["normalized"] is False
+    assert stats["mismatches"] == [{"body1": "a", "body2": "b", "allowed": 1, "total": 2}]
+    assert _geoms(root)["a2"].get("conaffinity") == "0"
+
+
+def test_excluded_body_pair_does_not_block_normalization():
+    """已经在 <contact><exclude> 里的 body 对不再影响掩码统一。"""
+    xml = PARTIAL_FILTER.replace(
+        "</worldbody>",
+        "</worldbody><contact><exclude body1=\"a\" body2=\"b\"/></contact>",
+    )
+    root = ET.fromstring(xml.strip())
+    stats = mjcf_edit.normalize_collision_masks(root)
+
+    assert stats["normalized"] is True
+    assert _geoms(root)["a2"].get("conaffinity") == "1"
+
+
+PARENT_CHILD_FILTER = """
+<mujoco>
+  <worldbody>
+    <body name="a">
+      <geom name="a1" contype="1" conaffinity="1"/>
+      <geom name="a2" contype="1" conaffinity="0"/>
+      <body name="b">
+        <geom name="b1" contype="1" conaffinity="0"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def test_parent_child_pair_is_ignored_when_filterparent_enabled():
+    """父子对由 filterparent 处理，不参与掩码等价性比较。"""
+    root = ET.fromstring(PARENT_CHILD_FILTER.strip())
+    stats = mjcf_edit.normalize_collision_masks(root)
+
+    assert stats["normalized"] is True
+    assert _geoms(root)["a2"].get("conaffinity") == "1"
+
+
+def test_parent_child_pair_blocks_normalization_when_filterparent_disabled():
+    """filterparent 关闭时，父子对的形状级过滤必须保留。"""
+    xml = PARENT_CHILD_FILTER.replace(
+        "<mujoco>",
+        '<mujoco><option><flag filterparent="false"/></option>',
+    )
+    root = ET.fromstring(xml.strip())
+    stats = mjcf_edit.normalize_collision_masks(root)
+
+    assert stats["normalized"] is False
+    assert stats["mismatches"] == [{"body1": "a", "body2": "b", "allowed": 1, "total": 2}]
