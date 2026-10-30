@@ -62,7 +62,7 @@ uv run usd2mjcf https://example.com/robot.usda ~/project/out/robot.xml
 命令行只负责输入、输出和配置文件路径，其余设置都写在 JSON 配置里。仓库的 `config/` 目录提供了完整示例：
 
 - `config/config.example.json`：全部键和默认值；
-- `config/fiveages_w2/config.json`、`config/fiveages_s2/config.json`：实际可用的完整配置。
+- `config/fiveages_w2/config.json`、`config/fiveages_s2/config.json`、`config/unitree_g1d/config.json`：实际可用的完整配置。
 
 常用项包括变体选择、碰撞体处理、凸包精度、命名规则、执行器控制范围、标记点和通用补丁。完整说明见[配置参考](doc/configuration.md)。
 

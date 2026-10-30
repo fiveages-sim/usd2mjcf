@@ -46,7 +46,7 @@ MuJoCo 不支持凹的碰撞网格。工具会把碰撞网格转成凸包或凸�
 - 视觉模型和碰撞模型体积差异较大，或者碰撞体之间有初始重叠；
 - 原本靠碰撞过滤避免的接触在重新打开碰撞体之后真实发生了。
 
-处理方式是用 `mjcf.contact.excludes` 增加排除。MuJoCo 已经自动排除父子 body 对，只需要关心没有父子关系但互相重叠的部位。
+处理方式是用 `mjcf.contact.excludes` 增加排除。默认的 `usd.self_collision_mode = "parent_filtered"` 会开启整机自碰撞，MuJoCo 已经自动排除父子 body 对，只需要关心没有父子关系但互相重叠的部位。
 
 ### 底面看起来被切掉一角
 

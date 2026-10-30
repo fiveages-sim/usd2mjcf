@@ -100,3 +100,65 @@ def test_invalid_pair_shape_raises():
     root = ET.fromstring(BASE.strip())
     with pytest.raises(ValueError):
         mjcf_edit.add_contact_excludes(root, [["only-one"]])
+
+
+PRUNE_BASE = """
+<mujoco>
+  <option><flag filterparent="true"/></option>
+  <worldbody>
+    <body name="torso">
+      <geom name="torso_col" contype="1" conaffinity="1"/>
+      <body name="shoulder">
+        <geom name="shoulder_col" contype="1" conaffinity="1"/>
+        <body name="elbow">
+          <geom name="elbow_col" contype="1" conaffinity="1"/>
+        </body>
+      </body>
+      <body name="visual_only">
+        <geom name="visual" contype="0" conaffinity="0"/>
+      </body>
+    </body>
+    <body name="default_col">
+      <geom name="default_geom"/>
+    </body>
+  </worldbody>
+  <contact>
+    <exclude body1="torso" body2="shoulder"/>
+    <exclude body1="torso" body2="elbow"/>
+    <exclude body1="torso" body2="visual_only"/>
+    <exclude body1="torso" body2="default_col"/>
+    <exclude body1="shoulder" body2="elbow"/>
+  </contact>
+</mujoco>
+"""
+
+
+def test_prunes_parent_child_and_vacuous_excludes():
+    root = ET.fromstring(PRUNE_BASE.strip())
+    stats = mjcf_edit.prune_redundant_excludes(root)
+
+    # torso-shoulder、shoulder-elbow 是父子；torso-visual_only 一方没有碰撞体。
+    assert stats["parent"] == 2
+    assert stats["vacuous"] == 1
+    assert stats["kept"] == 2
+    assert _excludes(root) == {
+        frozenset(("torso", "elbow")),
+        frozenset(("torso", "default_col")),
+    }
+
+
+def test_prune_keeps_parent_excludes_when_filterparent_disabled():
+    root = ET.fromstring(PRUNE_BASE.strip())
+    root.find("option/flag").set("filterparent", "false")
+    stats = mjcf_edit.prune_redundant_excludes(root)
+
+    assert stats["parent"] == 0
+    assert stats["vacuous"] == 1
+    assert stats["kept"] == 4
+
+
+def test_prune_without_contact_node():
+    root = ET.fromstring("<mujoco><worldbody/></mujoco>")
+    stats = mjcf_edit.prune_redundant_excludes(root)
+    assert stats == {"removed": 0, "parent": 0, "vacuous": 0, "kept": 0}
+

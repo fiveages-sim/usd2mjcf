@@ -14,6 +14,7 @@
       "newton"
     ],
     "collision_mode": "enable",
+    "self_collision_mode": "parent_filtered",
     "max_hull_vertices": null,
     "fix_self_material_colliders": true,
     "add_usd": {},

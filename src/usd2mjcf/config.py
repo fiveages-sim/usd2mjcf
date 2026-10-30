@@ -69,12 +69,17 @@ class UsdConfig:
     solver_variants: list[str] = field(default_factory=lambda: ["mujoco", "newton"])
     #: enable=重开被资产禁用的碰撞体（默认）；respect=完全按 USD
     collision_mode: str = "enable"
+    #: 整机自碰撞策略（在 Newton 解析前改 USD 开关）：
+    #: parent_filtered=开启整机自碰撞，父子 body 对由 MuJoCo 的 filterparent 过滤；
+    #: respect=完全按 USD 的 selfCollisionEnabled / enabledSelfCollisions。
+    self_collision_mode: str = "parent_filtered"
     #: 碰撞网格凸包的最大顶点数（Newton `mesh_maxhullvert`）。None = 沿用 Newton 默认（64）。
     #: 设置后会**同时覆盖** USD 里作者授权的上限（mjc:maxhullvert /
     #: newton:maxHullVertices / physxConvexHullCollision:hullVertexLimit），
     #: 否则作者写死的更小值优先。顶点太少时凸包会不对称地切掉底面角部（支撑面变小）。
     max_hull_vertices: int | None = None
-    #: 这些碰撞体自带 NewtonMaterialAPI 时会被 Newton 丢弃（轮子就是这种情况），
+    #: 这些碰撞体自带材质 API（NewtonMaterialAPI / PhysicsMaterialAPI /
+    #: PhysxMaterialAPI）时会被 Newton 丢弃（轮子就是这种情况），
     #: 这里把它们转成普通碰撞体 + 独立材质 prim
     fix_self_material_colliders: bool = True
     #: 透传给 newton.ModelBuilder.add_usd 的参数
@@ -292,6 +297,11 @@ def validate(cfg: Config) -> list[str]:
     problems: list[str] = []
     if cfg.usd.collision_mode not in ("enable", "respect"):
         problems.append(f"usd.collision_mode: 只能是 enable/respect，收到 {cfg.usd.collision_mode!r}")
+    if cfg.usd.self_collision_mode not in ("parent_filtered", "respect"):
+        problems.append(
+            "usd.self_collision_mode: 只能是 parent_filtered/respect，"
+            f"收到 {cfg.usd.self_collision_mode!r}"
+        )
     hull = cfg.usd.max_hull_vertices
     if hull is not None and (
         isinstance(hull, bool) or not isinstance(hull, int) or hull < 5
@@ -371,8 +381,9 @@ def describe() -> list[tuple[str, str]]:
         ("usd.variants", "variant set → 取值；只写覆盖项，其余沿用 USD 的授权默认值"),
         ("usd.solver_variants", "无授权默认值时的自动优先顺序（默认 mujoco/newton）"),
         ("usd.collision_mode", "enable=重开被禁用的碰撞体；respect=完全按 USD"),
+        ("usd.self_collision_mode", "parent_filtered=开启自碰撞、只过滤父子 body 对；respect=按 USD"),
         ("usd.max_hull_vertices", "碰撞网格凸包顶点上限（null=Newton 默认 64；设置后覆盖 USD 授权值）"),
-        ("usd.fix_self_material_colliders", "修复自带 NewtonMaterialAPI 被丢弃的碰撞体"),
+        ("usd.fix_self_material_colliders", "修复自带材质 API 被丢弃的碰撞体"),
         ("usd.add_usd", "透传给 newton ModelBuilder.add_usd 的参数"),
         ("usd.download_dir", "远程 https USD 的下载目录（默认 ./.usd_cache）"),
         ("usd.schema_priority", "schema resolver 优先级（默认 mjc,newton,physx）"),

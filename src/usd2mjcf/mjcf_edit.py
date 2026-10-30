@@ -11,7 +11,7 @@ import re
 import xml.etree.ElementTree as ET
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 # ---------------------------------------------------------------------------
 # 基础工具
@@ -330,6 +330,133 @@ def add_contact_excludes(
     if not added and not skipped and not unknown:
         log.append("  额外碰撞排除：配置里没有可用的配对")
     return {"added": added, "skipped": skipped, "unknown": sorted(set(unknown))}
+
+
+# ---------------------------------------------------------------------------
+# 清理冗余的接触排除
+# ---------------------------------------------------------------------------
+def _iter_worldbody_bodies(root: ET.Element) -> Iterator[tuple[ET.Element, str | None]]:
+    """遍历 `<worldbody>` 下的 body，产出 (元素, 父 body 名)。"""
+    worldbody = root.find("worldbody")
+    if worldbody is None:
+        return
+
+    def walk(node: ET.Element, parent: str | None) -> Iterator[tuple[ET.Element, str | None]]:
+        for child in node:
+            if child.tag != "body":
+                continue
+            name = child.get("name")
+            yield child, parent
+            yield from walk(child, name)
+
+    yield from walk(worldbody, None)
+
+
+def _body_direct_geoms(body: ET.Element) -> Iterator[ET.Element]:
+    """产出一个 body 自己的 geom；`<frame>` 不建立新 body，需要继续往下看。"""
+    for child in body:
+        if child.tag == "geom":
+            yield child
+        elif child.tag == "frame":
+            yield from _body_direct_geoms(child)
+
+
+def _geom_can_collide(geom: ET.Element) -> bool:
+    """按 MuJoCo 默认值判断一个 geom 是否能参与接触。
+
+    `contype` / `conaffinity` 都缺省时，MuJoCo 使用 1/1，仍然会碰撞；
+    只有两者都显式为 0（或等价）才确定不参与接触。
+    """
+    contype = geom.get("contype")
+    conaffinity = geom.get("conaffinity")
+    if contype is None and conaffinity is None:
+        return True
+    try:
+        ct = 1 if contype is None else int(contype)
+        ca = 1 if conaffinity is None else int(conaffinity)
+    except ValueError:
+        return True
+    return bool(ct or ca)
+
+
+def _body_collider_counts(root: ET.Element) -> dict[str, int]:
+    """统计每个 body 自己名下可参与接触的 geom 数量。"""
+    counts: dict[str, int] = {}
+    for body, _parent in _iter_worldbody_bodies(root):
+        name = body.get("name")
+        if not name:
+            continue
+        counts[name] = sum(1 for geom in _body_direct_geoms(body) if _geom_can_collide(geom))
+    return counts
+
+
+def prune_redundant_excludes(
+    root: ET.Element,
+    *,
+    notes: list[str] | None = None,
+) -> dict[str, Any]:
+    """删除 MuJoCo 已经自动处理、或永远不可能碰撞的 `<contact><exclude>`。
+
+    需要清理的两类：
+
+    * **父子 body 对**：MuJoCo 的 ``filterparent``（默认开启）已经过滤它们；
+    * **任一方没有可碰撞 geom 的 body 对**：不可能产生接触。
+
+    其余排除（非父子、双方都有碰撞体）保留，它们可能表达资产作者的真实过滤意图，
+    例如闭环机构里必然重叠的两个 body。
+    """
+    log: list[str] = notes if notes is not None else []
+    contact = root.find("contact")
+    result: dict[str, Any] = {"removed": 0, "parent": 0, "vacuous": 0, "kept": 0}
+    if contact is None:
+        return result
+
+    filterparent = True
+    option = root.find("option")
+    if option is not None:
+        flag = option.find("flag")
+        value = flag.get("filterparent") if flag is not None else None
+        if value is not None:
+            try:
+                filterparent = parse_bool(value)
+            except ValueError:
+                filterparent = True
+
+    parents = {
+        body.get("name"): parent
+        for body, parent in _iter_worldbody_bodies(root)
+        if body.get("name")
+    }
+    counts = _body_collider_counts(root)
+
+    removed_parent: list[tuple[str, str]] = []
+    removed_vacuous: list[tuple[str, str]] = []
+    for node in list(contact):
+        if node.tag != "exclude":
+            continue
+        body1, body2 = node.get("body1"), node.get("body2")
+        if not body1 or not body2:
+            continue
+        if counts.get(body1, 0) == 0 or counts.get(body2, 0) == 0:
+            contact.remove(node)
+            removed_vacuous.append((body1, body2))
+            continue
+        if filterparent and (parents.get(body1) == body2 or parents.get(body2) == body1):
+            contact.remove(node)
+            removed_parent.append((body1, body2))
+            continue
+        result["kept"] += 1
+
+    result["parent"] = len(removed_parent)
+    result["vacuous"] = len(removed_vacuous)
+    result["removed"] = len(removed_parent) + len(removed_vacuous)
+    if result["removed"]:
+        log.append(
+            f"  清理冗余 <exclude>：{result['removed']} 条"
+            f"（父子 body 对 {result['parent']} 条，无碰撞体 body 对 {result['vacuous']} 条）；"
+            f"保留 {result['kept']} 条真实过滤"
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------

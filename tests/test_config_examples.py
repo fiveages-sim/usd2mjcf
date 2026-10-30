@@ -24,6 +24,7 @@ EXAMPLE_CONFIGS = [
     REPO / "config" / "config.example.json",
     REPO / "config" / "fiveages_w2" / "config.json",
     REPO / "config" / "fiveages_s2" / "config.json",
+    REPO / "config" / "unitree_g1d" / "config.json",
 ]
 
 #: config 里 config.json 的注释键（加载器会忽略 _ 开头的键）

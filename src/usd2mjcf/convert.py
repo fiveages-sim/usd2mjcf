@@ -261,8 +261,9 @@ def convert(cfg: config_mod.Config) -> ConvertResult:
     )
     if self_material:
         changes.append(
-            f"自材质碰撞体修复：{len(self_material)} 个碰撞体自带 NewtonMaterialAPI"
-            "（Newton 会因此整块跳过），已转成独立材质 prim"
+            f"自材质碰撞体修复：{len(self_material)} 个碰撞体自带材质 API"
+            "（NewtonMaterialAPI / PhysicsMaterialAPI / PhysxMaterialAPI；"
+            "Newton 会因此整块跳过），已转成独立材质 prim"
         )
 
     # 3) 碰撞体使能 ------------------------------------------------------------
@@ -286,6 +287,17 @@ def convert(cfg: config_mod.Config) -> ConvertResult:
         warnings.append(
             f"collision_mode=respect：{len(muted)} 个被禁用的碰撞体不参与接触，模型可能无碰撞。"
         )
+
+    # 3a) 整机自碰撞：把粗粒度的“整机自碰撞关闭”展开成 MuJoCo 的父子过滤 --------
+    self_collision = usd_scene.apply_self_collision_mode(stage, cfg.usd.self_collision_mode)
+    if self_collision:
+        changes.append(
+            f"整机自碰撞：{len(self_collision)} 个 USD 开关从关闭改为开启"
+            "（self_collision_mode=parent_filtered）；父子 body 对由 MuJoCo 的 "
+            "filterparent 过滤，其余 body 对参与自碰撞"
+        )
+    elif cfg.usd.self_collision_mode == "respect":
+        changes.append("整机自碰撞：按 USD 授权（self_collision_mode=respect），不覆盖资产开关")
 
     # 3b) 碰撞网格凸包精度（必须在 Newton 解析之前改 stage）---------------------
     hull_overrides: list[dict[str, Any]] = []
@@ -352,6 +364,12 @@ def convert(cfg: config_mod.Config) -> ConvertResult:
         raise RuntimeError(
             "Newton 解析后的模型没有关节；MuJoCo 需要至少 1 个关节。"
             "请检查 usd.variants 里的 Physics 是否选对。"
+        )
+    if stats["dofs"] <= 0:
+        raise RuntimeError(
+            "Newton 解析后的模型没有自由度：通常说明 Physics 变体选到了空的物理层。"
+            "名为 mujoco 的变体不一定完整；请确认该层包含关节和驱动，"
+            "或改用资产作者默认的物理层。"
         )
 
     solver_kwargs: dict[str, Any] = {"skip_visual_only_geoms": not cfg.mjcf.visuals}
@@ -439,6 +457,11 @@ def convert(cfg: config_mod.Config) -> ConvertResult:
                 root, collider_labels(model), notes=changes
             )
 
+        # 6c1) 清理 Newton 推导出的冗余排除：父子 body 对由 filterparent 处理，
+        # 没有碰撞体的 body 对永远不会接触。必须在掩码定稿之后，才能正确判断
+        # 哪些 body 真的有碰撞体。
+        exclude_prune_stats = mjcf_edit.prune_redundant_excludes(root, notes=changes)
+
         # 6c2) 视觉体 / 碰撞体分组（必须在掩码定稿之后：判断“谁是碰撞体”依赖掩码）
         separation_stats: dict[str, Any] = {}
         separation_stats = mjcf_edit.separate_visual_collision(
@@ -480,10 +503,17 @@ def convert(cfg: config_mod.Config) -> ConvertResult:
         )
 
         # 6e) 额外碰撞排除（配置指定）
-        contact_stats: dict[str, Any] = {"added": [], "skipped": [], "unknown": []}
+        contact_stats: dict[str, Any] = {
+            "pruned": exclude_prune_stats,
+            "added": [],
+            "skipped": [],
+            "unknown": [],
+        }
         if cfg.mjcf.contact.excludes:
-            contact_stats = mjcf_edit.add_contact_excludes(
-                root, cfg.mjcf.contact.excludes, notes=changes, strict=cfg.strict_patch
+            contact_stats.update(
+                mjcf_edit.add_contact_excludes(
+                    root, cfg.mjcf.contact.excludes, notes=changes, strict=cfg.strict_patch
+                )
             )
 
         # 6f) 通用补丁（优先级最高，可能改名/删元素）-------------------------------
@@ -540,6 +570,10 @@ def convert(cfg: config_mod.Config) -> ConvertResult:
         naming_stats=naming_stats,
         collision={
             "mode": cfg.usd.collision_mode,
+            "selfCollision": {
+                "mode": cfg.usd.self_collision_mode,
+                "changed": self_collision,
+            },
             "mutedInUsd": muted,
             "reopened": forced,
             "selfMaterialFixed": self_material,

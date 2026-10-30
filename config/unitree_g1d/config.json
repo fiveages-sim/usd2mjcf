@@ -1,0 +1,133 @@
+{
+  "_comment": [
+    "Unitree G1D（轮式底盘 + 升降柱 + 双臂人形）示例配置。",
+    "",
+    "本地资产：~/project/assets/G1D.usda",
+    "",
+    "1) Physics 变体必须选 physx。这个资产的 Physics=mujoco 层只写了关节根和",
+    "   base_link 的质量，各部件自己的 mujoco 层是空的；选 mujoco 会得到 1 个刚体、",
+    "   0 个自由度、0 个执行器的空壳，而且转换过程不会报错。physx 和 physics 两个层",
+    "   内容基本一致，这里沿用资产作者在根层写的默认值 physx。",
+    "",
+    "2) 资产里没有 mjc:* 参数，执行器来自 drive:*:physics:*（刚度、阻尼、力限）。",
+    "   Newton 会把转动关节的刚度/阻尼按度→弧度放大 57.3 倍；平移的升降柱关节不缩放。",
+    "   实测 implicitfast 下位置伺服能稳定跟踪，因此保留资产原值。",
+    "",
+    "3) 底盘碰撞组里有一块零厚度的平面网格",
+    "   （AGV_link/collisions/agv_base_1/tn__G1D313_1_ZCE）。MuJoCo 不能把它当作",
+    "   接触体，Newton 写出时会直接报错。它只有约 5 mm × 6 mm，是底盘顶面的小薄片，",
+    "   不承担支撑，所以用 add_usd.ignore_paths 跳过。",
+    "",
+    "4) 驱动轮在 USD 里是加速度驱动（stiffness=0、damping=1e6/deg、力限为无穷大）。",
+    "   照抄会得到 kv≈5.7e7、ctrlrange=0 的速度伺服，策略无法驱动底盘。这里改成",
+    "   kv=20、±100 N·m、±15 rad/s 的速度伺服（轮半径约 0.1 m，约 1.5 m/s）。",
+    "",
+    "5) 资产用 physxArticulation:enabledSelfCollisions=0 关闭整机自碰撞。配置里的",
+    "   usd.self_collision_mode=parent_filtered 会在转换前把这个开关改成开启，让手臂",
+    "   和躯干等非相邻部位真实碰撞；父子 body 对由 MuJoCo 的 filterparent 过滤。",
+    "   转换后会清掉 Newton 推导出的冗余 <exclude>，并在 mjcf.contact.excludes",
+    "   里显式补上下面这些“物理上必然重叠、但又不是父子关系”的部位：4 个脚轮与",
+    "   底盘、升降柱内筒与外筒。",
+    "",
+    "6) 命名：工具会把 Newton 的下划线路径名还原成 USD 叶子名。仍有 1 个 Newton",
+    "   合成的自由关节 joint_1，以及与底盘 base_link 撞车的 G1D_Chassis_base_link，",
+    "   这里用 rename 整理。",
+    "",
+    "换末端执行器：改 EE_Left / EE_Right（none | rubber_hand | revo2 | dex3 | dex1）。",
+    "  不是 none 时，夹爪或灵巧手会挂在 left_tcp / right_tcp 下，关节和执行器跟着变。",
+    "换底盘/升降/躯干/手臂：改 Chassis / Lift / BodyHead / Arms（当前全开）。"
+  ],
+
+  "usd": {
+    "_comment": "variant 取值区分大小写；Chassis/Lift/BodyHead/Arms 的关闭值是 None（大写 N），不是 none。",
+    "variants": {
+      "Physics": "physx",
+      "ROS": "none",
+      "Sensor": "none",
+      "Chassis": "chassis",
+      "Lift": "lift",
+      "BodyHead": "bodyhead",
+      "Arms": "arms",
+      "EE_Left": "none",
+      "EE_Right": "none",
+      "Robot": "none"
+    },
+    "self_collision_mode": "parent_filtered",
+    "max_hull_vertices": 512,
+    "add_usd": {
+      "ignore_paths": [
+        "/G1D/G1D_Chassis/AGV_link/collisions/agv_base_1/tn__G1D313_1_ZCE(/.*)?"
+      ]
+    }
+  },
+
+  "mjcf": {
+    "name_from_usd": ["joint", "body"],
+    "actuator_names": "joint",
+    "sites": [
+      {
+        "name": "LEFT_TCP_SITE",
+        "body": "left_wrist_yaw_link",
+        "pos": [0.0415, 0, 0],
+        "size": 0.005,
+        "rgba": [0.2, 0.9, 0.2, 0.5]
+      },
+      {
+        "name": "RIGHT_TCP_SITE",
+        "body": "right_wrist_yaw_link",
+        "pos": [0.0415, 0, 0],
+        "size": 0.005,
+        "rgba": [0.2, 0.9, 0.2, 0.5]
+      }
+    ],
+    "scene": {
+      "timestep": 0.002
+    },
+    "contact": {
+      "_comment": "非父子、但物理上必然重叠的部位；脚轮装在底盘内部，升降柱内外筒套在一起。",
+      "excludes": [
+        ["AGV_link", "fl_caster_wheel"],
+        ["AGV_link", "fr_caster_wheel"],
+        ["AGV_link", "rl_caster_wheel"],
+        ["AGV_link", "rr_caster_wheel"],
+        ["LZ_ot_Link", "LZ_it_Link"]
+      ]
+    }
+  },
+
+  "patch": {
+    "option": {
+      "integrator": "implicitfast"
+    },
+    "rename": {
+      "_comment": "规则按顺序施加；joint_1 是 Newton 合成的自由关节，G1D_Chassis_base_link 与 base_link 撞名。",
+      "joint": [
+        { "pattern": "^joint_1$", "replacement": "base_freejoint" }
+      ],
+      "body": [
+        { "pattern": "^G1D_Chassis_base_link$", "replacement": "chassis_base_link" }
+      ]
+    },
+    "joints": [
+      {
+        "match": { "name": "*_Wheel_Joint" },
+        "actuatorfrcrange": [-100, 100]
+      }
+    ],
+    "actuators": [
+      {
+        "match": { "joint": "*_Wheel_Joint" },
+        "type": "velocity",
+        "kv": 20,
+        "forcerange": [-100, 100],
+        "ctrlrange": [-15, 15]
+      }
+    ]
+  },
+
+  "verify": {
+    "enabled": true,
+    "render": true,
+    "smoke_steps": 200
+  }
+}

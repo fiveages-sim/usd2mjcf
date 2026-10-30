@@ -602,19 +602,28 @@ _MATERIAL_ATTR_ALLOW = frozenset(
 )
 _MATERIAL_SCOPE = "/usd2mjcf_materials"
 
+#: 碰撞体上可能出现的"自带材质"API。不同资产写法不同：
+#: Isaac 常见 NewtonMaterialAPI，URDF 转换器常见 PhysicsMaterialAPI，
+#: 混用 PhysX 的资产还会附加 PhysxMaterialAPI。三者都会让 Newton 把碰撞体
+#: 当成材质定义而跳过碰撞形状。
+_SELF_MATERIAL_APIS = ("NewtonMaterialAPI", "PhysicsMaterialAPI", "PhysxMaterialAPI")
+
 
 def fix_self_material_colliders(stage: Any) -> list[dict[str, str]]:
-    """把"自带牛顿材质的碰撞体"拆成 **普通碰撞体 + 独立材质 prim**。
+    """把"自带材质的碰撞体"拆成 **普通碰撞体 + 独立材质 prim**。
 
     Isaac 的底盘会把驱动轮的碰撞圆柱写成"自材质"（同一个 prim 上既挂
-    ``UsdPhysicsCollisionAPI`` 又挂 ``NewtonMaterialAPI``）。这在 PhysX 里是合法的
-    逐碰撞体材质写法，但 **Newton 的 USD 导入器会把这个 prim 当成材质定义，于是完全
-    不导入它的碰撞形状** —— 实测底盘四个轮子的碰撞体就是这样消失的，而轮子恰恰是
-    驱动轮式机器人最关键的碰撞体。
+    ``UsdPhysicsCollisionAPI`` 又挂材质 API）。这在 PhysX 里是合法的逐碰撞体
+    材质写法，但 **Newton 的 USD 导入器会把这个 prim 当成材质定义，于是完全不导入
+    它的碰撞形状** —— 实测底盘四个轮子的碰撞体就是这样消失的，而轮子恰恰是驱动
+    轮式机器人最关键的碰撞体。
+
+    材质 API 可能是 ``NewtonMaterialAPI``、``PhysicsMaterialAPI`` 或
+    ``PhysxMaterialAPI``，三者都要识别。
 
     改写方式（语义等价）：
       * 在 ``/usd2mjcf_materials`` 下建一个 ``Material`` prim，把材质类属性复制过去；
-      * 原碰撞体挂 ``material:binding`` 指向它，并移除 ``NewtonMaterialAPI``。
+      * 原碰撞体挂 ``material:binding`` 指向它，并移除材质 API。
 
     只针对"同时是碰撞体"的 prim；真正的材质 prim 不受影响。
     """
@@ -622,7 +631,8 @@ def fix_self_material_colliders(stage: Any) -> list[dict[str, str]]:
     fixed: list[dict[str, str]] = []
     for prim in iter_prims(stage, include_instance_proxies=False):
         schemas = prim.GetAppliedSchemas() or []
-        if "NewtonMaterialAPI" not in schemas:
+        material_apis = [api for api in _SELF_MATERIAL_APIS if api in schemas]
+        if not material_apis:
             continue
         if "PhysicsCollisionAPI" not in schemas:
             continue  # 只处理"自材质碰撞体"，真正的材质 prim 不动
@@ -633,7 +643,8 @@ def fix_self_material_colliders(stage: Any) -> list[dict[str, str]]:
             binding = UsdShade.MaterialBindingAPI.Apply(prim)
             binding.Bind(material)
             prim.RemoveAPI(UsdPhysics.MaterialAPI)
-            prim.RemoveAPI("NewtonMaterialAPI")
+            for api in material_apis:
+                prim.RemoveAPI(api)
         except Exception as exc:  # pragma: no cover - 坏 asset 容错
             fixed.append({"collider": str(prim.GetPath()), "status": f"failed: {type(exc).__name__}"})
             continue
@@ -657,7 +668,6 @@ def _make_side_material(stage: Any, collider: Any, Usd: Any, UsdPhysics: Any, Us
         mat_prim.ApplyAPI("NewtonMaterialAPI")
     except Exception:  # pragma: no cover - schema 未注册时也不致命
         pass
-    copied = False
     for attr in collider.GetAttributes():
         attr_name = attr.GetName()
         if not attr.HasAuthoredValue():
@@ -668,10 +678,11 @@ def _make_side_material(stage: Any, collider: Any, Usd: Any, UsdPhysics: Any, Us
         target = mat_prim.CreateAttribute(attr_name, attr.GetTypeName(), custom=False)
         try:
             target.Set(value)
-            copied = True
         except Exception:  # pragma: no cover
             continue
-    return material if copied else None
+    # 即使没有可复制的材质属性，也要返回材质 prim：否则碰撞体会继续带着材质 API，
+    # Newton 仍然会跳过它的碰撞形状。默认材质比丢失碰撞体更安全。
+    return material
 
 
 # ---------------------------------------------------------------------------
@@ -743,6 +754,84 @@ def muted_colliders(stage: Any) -> list[str]:
         except Exception:  # pragma: no cover
             continue
     return out
+
+
+# ---------------------------------------------------------------------------
+# 整机自碰撞
+# ---------------------------------------------------------------------------
+SELF_COLLISION_MODES = ("parent_filtered", "respect")
+
+#: 整机自碰撞开关在不同 schema 里的属性名。两者都可能出现，遇到就一起处理。
+_SELF_COLLISION_ATTRS = (
+    "newton:selfCollisionEnabled",
+    "physxArticulation:enabledSelfCollisions",
+)
+
+
+def _path_depth(prim: Any) -> int:
+    """返回 prim 路径的层数；`/A` 为 1，`/A/B` 为 2。"""
+    return len(prim.GetPath().pathString.strip("/").split("/"))
+
+
+def _self_collision_targets(stage: Any) -> list[Any]:
+    """挑出真正控制整机自碰撞的 prim。
+
+    一个资产里可能有多层 articulation root：整机、左右臂、头部各有一个。
+    只有**最浅一层**（离 stage 根最近）的 root 控制整机自碰撞；更深层的开关
+    属于部件自己的局部策略，不应被统一覆盖。
+
+    找不到 articulation root API 时退回"所有带自碰撞属性的 prim"，兼容没有
+    写 API 的资产。
+    """
+    prims = list(stage.TraverseAll())
+    roots = [
+        prim
+        for prim in prims
+        if any("ArticulationRootAPI" in schema for schema in (prim.GetAppliedSchemas() or []))
+    ]
+    if roots:
+        shallowest = min(_path_depth(prim) for prim in roots)
+        return [prim for prim in roots if _path_depth(prim) == shallowest]
+    return prims
+
+
+def apply_self_collision_mode(stage: Any, mode: str = "parent_filtered") -> list[dict[str, Any]]:
+    """按模式调整整机自碰撞开关，返回被改动的属性记录。
+
+    资产经常用 ``newton:selfCollisionEnabled = 0`` 或
+    ``physxArticulation:enabledSelfCollisions = 0`` 一次性关闭整机自碰撞。
+    Newton 会把这种粗粒度开关展开成**所有 body 对**的过滤，导出的 MJCF 就会出现
+    "手臂穿过躯干"这类问题 —— 实际语义变成了完全没有自碰撞。
+
+    * ``parent_filtered`` —— 把最浅一层的整机 articulation root 开关改成开启
+      （推荐）。MuJoCo 的 ``filterparent`` 默认会过滤父子 body 对，其余 body 对
+      （例如手臂与躯干）正常碰撞。部件级 root 的局部开关保持不动。
+    * ``respect`` —— 完全按 USD 授权，保留资产的整机自碰撞关闭语义。
+    """
+    if mode not in SELF_COLLISION_MODES:
+        raise ValueError(f"self_collision_mode 必须是 {SELF_COLLISION_MODES} 之一，收到 {mode!r}")
+    if mode == "respect":
+        return []
+    changed: list[dict[str, Any]] = []
+    for prim in _self_collision_targets(stage):
+        for attr_name in _SELF_COLLISION_ATTRS:
+            attr = prim.GetAttribute(attr_name)
+            try:
+                authored = bool(attr and attr.HasAuthoredValue())
+                enabled = bool(attr.Get()) if authored else True
+            except Exception:  # pragma: no cover - 坏 asset 容错
+                continue
+            if not authored or enabled:
+                continue
+            attr.Set(True)
+            changed.append(
+                {
+                    "prim": prim.GetPath().pathString,
+                    "attribute": attr_name,
+                    "from": False,
+                }
+            )
+    return changed
 
 
 #: 凸包顶点上限在三种 schema 里的属性名（顺序 = 优先级）。覆盖时**三个都改**，

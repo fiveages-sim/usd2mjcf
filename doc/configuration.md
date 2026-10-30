@@ -44,8 +44,9 @@ uv run usd2mjcf ~/project/assets/robot.usda ~/project/out/robot.xml ~/project/co
 | `variants` | `{}` | 指定变体集合的取值，只需要写要覆盖的部分 |
 | `solver_variants` | `["mujoco", "newton"]` | 资产没有指定默认变体时的自动挑选顺序 |
 | `collision_mode` | `"enable"` | `enable` 表示重新打开被资产禁用的碰撞体，`respect` 表示完全按 USD |
+| `self_collision_mode` | `"parent_filtered"` | `parent_filtered` 开启整机自碰撞、只过滤父子 body 对；`respect` 完全按 USD 的自碰撞开关 |
 | `max_hull_vertices` | `null` | 碰撞网格凸包的最大顶点数，`null` 表示沿用 Newton 默认值 64 |
-| `fix_self_material_colliders` | `true` | 修复“碰撞体自带材质信息”导致整个碰撞体被跳过的问题 |
+| `fix_self_material_colliders` | `true` | 修复“碰撞体自带材质信息”（`NewtonMaterialAPI`、`PhysicsMaterialAPI`、`PhysxMaterialAPI`）导致整个碰撞体被跳过的问题 |
 | `add_usd` | `{}` | 直接透传给 Newton 的 USD 导入参数 |
 | `download_dir` | `null` | 远程资产的缓存目录，默认是 `./.usd_cache` |
 | `schema_priority` | `["mjc", "newton", "physx"]` | 读取 USD 属性时的 schema 优先级 |
@@ -75,6 +76,15 @@ USD 里可以有多个可切换的部分，例如底盘型号、左右机械臂�
 - `respect`：完全按 USD 的设置，可能得到没有碰撞的模型。
 
 重新打开后如果出现部件互相挤开的情况，用 `mjcf.contact.excludes` 补上排除关系。
+
+### self_collision_mode
+
+资产常用整机自碰撞开关（`newton:selfCollisionEnabled` 或 `physxArticulation:enabledSelfCollisions`）一次性关闭所有自碰撞。直接照抄会让 Newton 把所有 body 对都写成排除，结果是手臂可以穿过躯干。
+
+- `parent_filtered`（默认）：转换前把最浅一层的整机 articulation root 开关改成开启；部件级 root 的局部开关保持不动。MuJoCo 的 `filterparent` 默认过滤父子 body 对，其余 body 对正常碰撞；
+- `respect`：完全按 USD 授权，保留资产的关闭语义。
+
+转换后，工具会清理 Newton 推导出的冗余排除：父子 body 对，以及任一方没有碰撞体的 body 对。物理上必然重叠的非父子部位（例如底盘与脚轮、升降柱内外筒）仍需要用 `mjcf.contact.excludes` 补。
 
 ### max_hull_vertices
 
@@ -206,6 +216,8 @@ Newton 会用“下划线加 prim 路径”的方式命名实体，产物里的�
 ```
 
 每一项是一对 body 名，两侧都支持通配符。已经存在的排除会跳过，名字找不到会给出警告。这里写的是产物里的 body 名，不是 USD 路径。
+
+工具会先清理 Newton 推导出的冗余排除：父子 body 对（MuJoCo 的 `filterparent` 已经处理）和任一方没有碰撞体的 body 对。非父子且双方都有碰撞体的排除会保留。这里的 `excludes` 在清理之后追加，不受影响。
 
 ## mjcf.sites 段
 
